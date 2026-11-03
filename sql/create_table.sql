@@ -8,6 +8,7 @@ CREATE TABLE app_user (
     username VARCHAR(64) NOT NULL COMMENT '登录账号，服务端统一大小写规则',
     password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希，不能保存明文密码',
     nickname VARCHAR(100) NOT NULL DEFAULT '' COMMENT '显示昵称',
+    avatar_url VARCHAR(1024) DEFAULT NULL COMMENT '头像地址',
     status VARCHAR(16) NOT NULL DEFAULT 'enabled' COMMENT 'enabled启用、disabled禁用',
     create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
     update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',

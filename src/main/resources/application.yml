@@ -3,6 +3,21 @@ spring:
     name: AgentPaperMate
   profiles:
     active: dev
+  # mysql
+  datasource:
+    driver-class-name: ${apm.datasource.driver-class-name}
+    url: ${apm.datasource.url}
+    username: ${apm.datasource.username}
+    password: ${apm.datasource.password}
+    hikari:
+      connection-init-sql: "SET SESSION time_zone = '+08:00'"
+  data:
+    redis:
+      host: ${apm.data.redis.host}
+      port: ${apm.data.redis.port}
+      password: ${apm.data.redis.password}
+      ttl: ${apm.data.redis.ttl}
+      database: 0
 server:
   port: 8123
   servlet:

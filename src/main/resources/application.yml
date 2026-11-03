@@ -3,6 +3,10 @@ spring:
     name: AgentPaperMate
   profiles:
     active: dev
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 51MB
   # mysql
   datasource:
     driver-class-name: ${apm.datasource.driver-class-name}
@@ -27,3 +31,10 @@ knife4j:
   enable: true
   setting:
     language: zh_cn
+cos:
+  client:
+    host: ${cos.client.host}
+    secretId: ${cos.client.secretId}
+    secretKey: ${cos.client.secretKey}
+    region: ${cos.client.region}
+    bucket: ${cos.client.bucket}

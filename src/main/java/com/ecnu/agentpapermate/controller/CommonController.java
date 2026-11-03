@@ -54,7 +54,7 @@ public class CommonController {
         appUserService.getLoginUser(request);
         String extension = validateFile(file, AVATAR_MAX_SIZE, AVATAR_EXTENSIONS,
                 "头像仅支持 JPG、JPEG、PNG、WEBP，大小不能超过 2 MB");
-        return ResultUtils.success(upload(file, "avatars", extension));
+        return ResultUtils.success(upload(file, "avatars", extension, null));
     }
 
     /**
@@ -63,10 +63,10 @@ public class CommonController {
     @PostMapping(value = "/upload/paper", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public BaseResponse<String> uploadPaper(@RequestPart("file") MultipartFile file,
                                              HttpServletRequest request) {
-        appUserService.getLoginUser(request);
+        Long userId = appUserService.getLoginUser(request).getId();
         String extension = validateFile(file, PAPER_MAX_SIZE, Set.of("pdf"),
                 "论文仅支持 PDF，大小不能超过 50 MB");
-        return ResultUtils.success(upload(file, "papers", extension));
+        return ResultUtils.success(upload(file, "papers", extension, userId));
     }
 
     private String validateFile(MultipartFile file, long maxSize, Set<String> extensions, String message) {
@@ -112,14 +112,16 @@ public class CommonController {
         return true;
     }
 
-    private String upload(MultipartFile file, String directory, String extension) {
+    private String upload(MultipartFile file, String directory, String extension, Long paperOwnerId) {
         String key = directory + "/" + LocalDate.now().format(DATE_FORMATTER) + "/"
                 + UUID.randomUUID().toString().replace("-", "") + "." + extension;
         Path temporaryFile = null;
         try {
             temporaryFile = Files.createTempFile("cos-upload-", "." + extension);
             file.transferTo(temporaryFile);
-            String url = cosManager.uploadFile(key, temporaryFile.toFile());
+            String url = paperOwnerId == null
+                    ? cosManager.uploadFile(key, temporaryFile.toFile())
+                    : cosManager.uploadPaper(key, temporaryFile.toFile(), file.getOriginalFilename(), paperOwnerId);
             ThrowUtils.throwIf(url == null || url.isBlank(), ErrorCode.OPERATION_ERROR, "文件上传失败，请重试");
             return url;
         } catch (BusinessException e) {

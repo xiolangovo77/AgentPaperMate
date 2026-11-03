@@ -38,3 +38,21 @@ cos:
     secretKey: ${cos.client.secretKey}
     region: ${cos.client.region}
     bucket: ${cos.client.bucket}
+
+# 任务创建时保存以下配置快照。模型、维度和索引必须与实际消费者匹配。
+# 配置绑定后在 Bean 初始化时校验；必填项缺失或配置无效会阻止应用启动。
+paper:
+  processing:
+    parser-version: unknown
+    chunking-version: unknown
+    chunk-size: 1000
+    chunk-overlap: 150
+    chunk-unit: characters
+    embedding-model: unknown
+    embedding-version: unknown
+    embedding-dimension: 1024
+    es-index-name: unknown
+    exchange-name: paper.processing
+    routing-key: paper.processing.requested
+    max-retries: 3
+    max-publish-attempts: 10

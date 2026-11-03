@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: AgentPaperMate
+  profiles:
+    active: dev
+server:
+  port: 8123
+  servlet:
+    context-path: /api
+# knife4j
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn

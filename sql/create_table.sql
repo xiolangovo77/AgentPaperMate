@@ -1,0 +1,247 @@
+-- AgentPaperMate 第一阶段 MySQL 建表脚本
+-- 来源：需求方案/sql.md；适用 MySQL 8.0.16 及以上的 8.x 版本。
+-- 执行前请先选择目标数据库；已有同名表时请使用迁移脚本。
+-- ID 由后端生成雪花 ID，时间统一保存 UTC。
+
+CREATE TABLE app_user (
+    id BIGINT NOT NULL COMMENT '用户ID',
+    username VARCHAR(64) NOT NULL COMMENT '登录账号，服务端统一大小写规则',
+    password_hash VARCHAR(255) NOT NULL COMMENT '密码哈希，不能保存明文密码',
+    nickname VARCHAR(100) NOT NULL DEFAULT '' COMMENT '显示昵称',
+    status VARCHAR(16) NOT NULL DEFAULT 'enabled' COMMENT 'enabled启用、disabled禁用',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_user_username (username),
+    CONSTRAINT ck_user_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户表';
+
+CREATE TABLE paper (
+    id BIGINT NOT NULL COMMENT '论文ID',
+    user_id BIGINT NOT NULL COMMENT '所属用户ID，关联app_user.id',
+    title VARCHAR(500) NOT NULL COMMENT '论文标题，未解析前可先用文件名',
+    authors VARCHAR(1000) NOT NULL DEFAULT '' COMMENT '作者展示文本，第一阶段不单独建作者表',
+    topic VARCHAR(100) NOT NULL DEFAULT '' COMMENT '主题，第一阶段每篇一个主题',
+    abstract_text TEXT NULL COMMENT '摘要，未提取到则为空',
+    original_filename VARCHAR(255) NOT NULL COMMENT '上传时的文件名，仅用于展示',
+    file_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '原始文件SHA-256十六进制值',
+    file_size BIGINT UNSIGNED NOT NULL COMMENT 'PDF字节数',
+    file_url VARCHAR(2048) NOT NULL COMMENT 'PDF的COS固定访问URL，不含临时签名参数',
+    page_count INT UNSIGNED NULL COMMENT 'PDF物理页数，解析前为空',
+    status VARCHAR(20) NOT NULL DEFAULT 'uploaded' COMMENT 'uploaded、processing、ready、failed',
+    active_index_version INT UNSIGNED NULL COMMENT '当前可用于检索的处理版本，未就绪为空',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_paper_user_hash (user_id, file_hash),
+    KEY idx_paper_user_list (user_id, is_delete, create_time, id),
+    KEY idx_paper_user_topic (user_id, is_delete, topic, create_time, id),
+    CONSTRAINT ck_paper_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='论文及原始文件信息';
+
+CREATE TABLE chat_session (
+    id BIGINT NOT NULL COMMENT '聊天室ID',
+    user_id BIGINT NOT NULL COMMENT '所属用户ID，关联app_user.id',
+    name VARCHAR(200) NOT NULL DEFAULT '新研究会话' COMMENT '聊天室名称',
+    input_draft TEXT NULL COMMENT '尚未发送的输入草稿',
+    scope_version INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '论文范围版本，集合实际变化时加1',
+    active_run_id BIGINT NULL COMMENT '活动任务ID，关联agent_run.id，无活动任务时为空',
+    last_message_time DATETIME(3) NULL COMMENT '最近聊天或资料变更时间，不受保存草稿影响',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    KEY idx_session_user_recent (user_id, is_delete, last_message_time, id),
+    CONSTRAINT ck_session_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='研究聊天室';
+
+CREATE TABLE session_paper (
+    id BIGINT NOT NULL COMMENT '资料关联ID',
+    session_id BIGINT NOT NULL COMMENT '聊天室ID，关联chat_session.id',
+    paper_id BIGINT NOT NULL COMMENT '论文ID，关联paper.id',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '关联首次创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '关联更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '0当前在会话中、1已移出',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_session_paper_pair (session_id, paper_id),
+    KEY idx_session_paper_active (session_id, is_delete, paper_id),
+    KEY idx_session_paper_reverse (paper_id, is_delete, session_id),
+    CONSTRAINT ck_session_paper_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='聊天室当前论文关联';
+
+CREATE TABLE reading_note (
+    id BIGINT NOT NULL COMMENT '笔记ID',
+    user_id BIGINT NOT NULL COMMENT '笔记所有者，关联app_user.id',
+    paper_id BIGINT NOT NULL COMMENT '所属论文ID，关联paper.id',
+    research_question TEXT NULL COMMENT '研究问题',
+    methods TEXT NULL COMMENT '技术方法',
+    innovations TEXT NULL COMMENT '核心创新',
+    experiment_results TEXT NULL COMMENT '实验结果',
+    limitations_questions TEXT NULL COMMENT '局限与疑问',
+    personal_thoughts TEXT NULL COMMENT '个人思考',
+    version INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '乐观锁版本，成功保存后加1',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_note_user_paper (user_id, paper_id),
+    CONSTRAINT ck_note_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='论文阅读笔记';
+
+CREATE TABLE agent_run (
+    id BIGINT NOT NULL COMMENT '一次问答任务ID，即runId',
+    session_id BIGINT NOT NULL COMMENT '所属聊天室ID，关联chat_session.id',
+    user_id BIGINT NOT NULL COMMENT '发起用户ID，必须与会话所有者一致',
+    request_key VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '客户端本次提交幂等键，重试保持不变',
+    user_query TEXT NOT NULL COMMENT '本次原始问题，用于执行和幂等请求核对',
+    executor_type VARCHAR(16) NOT NULL DEFAULT 'rag' COMMENT 'rag固定流程、agent智能体',
+    status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending、running、completed、failed、cancelled、timeout',
+    scope_version INT UNSIGNED NOT NULL COMMENT '创建任务时的会话资料范围版本快照',
+    papers_snapshot JSON NOT NULL COMMENT '服务端生成的论文ID、索引版本、ES索引及模型配置快照数组',
+    evidence_snapshot JSON NULL COMMENT '本次允许引用的证据清单，保存来源定位与必要摘录，不存向量',
+    model_name VARCHAR(128) NOT NULL COMMENT '本次回答模型标识',
+    model_config JSON NULL COMMENT '温度、输出限制等非敏感模型参数',
+    skill_id VARCHAR(64) NULL COMMENT '第二阶段所用技能，第一阶段为空',
+    skill_version VARCHAR(64) NULL COMMENT '技能版本，第一阶段为空',
+    skill_content_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '加载技能及参考资料的内容哈希',
+    input_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次累计输入Token',
+    output_tokens BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次累计输出Token',
+    step_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '已执行模型轮数',
+    tool_call_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '工具实际调用次数，包含重试',
+    event_seq BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '已分配的最后一个进度事件序号',
+    start_time DATETIME(3) NULL COMMENT '开始执行时间UTC',
+    end_time DATETIME(3) NULL COMMENT '进入终态的时间UTC',
+    deadline DATETIME(3) NULL COMMENT '开始执行时确定的截止时间UTC',
+    error_code VARCHAR(64) NULL COMMENT '失败或超时原因代码',
+    error_message TEXT NULL COMMENT '可读错误摘要，不含凭据',
+    retry_of_run_id BIGINT NULL COMMENT '新任务重试时关联原Run，不复用原幂等键',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_run_session_request (session_id, request_key),
+    KEY idx_run_session_history (session_id, is_delete, create_time, id),
+    KEY idx_run_status_deadline (status, is_delete, deadline, id),
+    CONSTRAINT ck_run_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='单次问答执行任务';
+
+CREATE TABLE chat_message (
+    id BIGINT NOT NULL COMMENT '消息ID',
+    session_id BIGINT NOT NULL COMMENT '所属聊天室ID，关联chat_session.id',
+    run_id BIGINT NULL COMMENT '所属问答任务，资料变更消息为空',
+    role VARCHAR(16) NOT NULL COMMENT 'user、assistant、system',
+    message_type VARCHAR(32) NOT NULL DEFAULT 'text' COMMENT 'text聊天正文、scope_change资料变更',
+    content MEDIUMTEXT NOT NULL COMMENT '消息正文，助手正文仅保存最终校验结果',
+    extra_data JSON NULL COMMENT '资料变更前后ID等补充信息',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_message_run_role (run_id, role),
+    KEY idx_message_session_page (session_id, is_delete, id),
+    CONSTRAINT ck_message_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='聊天室消息';
+
+CREATE TABLE message_citation (
+    id BIGINT NOT NULL COMMENT '引用ID',
+    message_id BIGINT NOT NULL COMMENT '助手消息ID，关联chat_message.id',
+    evidence_id VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '本次运行中的证据标识，如E1',
+    paper_id BIGINT NOT NULL COMMENT '来源论文ID，关联paper.id',
+    paper_title VARCHAR(500) NOT NULL COMMENT '引用时的论文标题快照',
+    index_version INT UNSIGNED NOT NULL COMMENT '引用时的处理索引版本',
+    es_index_name VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '来源ES物理索引名',
+    chunk_id VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '来源片段ID；页面读取时使用已登记的证据片段ID',
+    page_start INT UNSIGNED NOT NULL COMMENT 'PDF起始物理页码，从1开始',
+    page_end INT UNSIGNED NOT NULL COMMENT 'PDF结束物理页码，单页时等于起始页',
+    quoted_text TEXT NOT NULL COMMENT '实际原文摘录快照，不能用模型改写文本冒充',
+    source_location JSON NULL COMMENT '可选段落偏移或坐标等定位信息，第一阶段可为空',
+    file_url VARCHAR(2048) NOT NULL COMMENT '引用时PDF固定访问URL快照，不含临时签名参数',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_citation_message_evidence (message_id, evidence_id),
+    KEY idx_citation_paper (paper_id, is_delete, message_id),
+    CONSTRAINT ck_citation_is_delete CHECK (is_delete IN (0, 1)),
+    CONSTRAINT ck_citation_pages CHECK (page_start >= 1 AND page_end >= page_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='回答原文引用快照';
+
+CREATE TABLE paper_processing_job (
+    id BIGINT NOT NULL COMMENT '论文入库任务ID',
+    paper_id BIGINT NOT NULL COMMENT '处理的论文ID，关联paper.id',
+    index_version INT UNSIGNED NOT NULL COMMENT '本次处理版本，同一论文逐次递增',
+    status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending、running、completed、failed',
+    current_step VARCHAR(32) NOT NULL DEFAULT 'queued' COMMENT 'queued、parsing、chunking、embedding、indexing、verifying、done',
+    parser_version VARCHAR(64) NOT NULL COMMENT 'PDF解析器及处理规则版本',
+    chunking_version VARCHAR(64) NOT NULL COMMENT '切分策略版本',
+    chunking_config JSON NOT NULL COMMENT '片段大小、重叠等实际配置',
+    embedding_model VARCHAR(128) NOT NULL COMMENT 'Embedding模型标识',
+    embedding_version VARCHAR(64) NOT NULL COMMENT 'Embedding模型版本或应用配置版本',
+    embedding_dimension INT UNSIGNED NOT NULL COMMENT '实际向量维度',
+    es_index_name VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '本次写入的ES物理索引',
+    total_chunks INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '本次应写入片段数',
+    indexed_chunks INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '已确认写入的片段数，重试时核对而非盲目累加',
+    retry_count INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '已执行的额外重试次数',
+    max_retries INT UNSIGNED NOT NULL DEFAULT 3 COMMENT '允许的额外重试上限',
+    next_retry_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '允许首次执行或重试的时间UTC',
+    lease_token VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '本次领取的唯一令牌，防止旧消费者回写',
+    lease_until DATETIME(3) NULL COMMENT '消费者租约到期时间UTC，执行期间续约',
+    start_time DATETIME(3) NULL COMMENT '最近一次开始执行时间UTC',
+    end_time DATETIME(3) NULL COMMENT '完成或最终失败时间UTC',
+    error_code VARCHAR(64) NULL COMMENT '最近错误代码',
+    error_message TEXT NULL COMMENT '最近错误摘要，不含凭据',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '任务创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '任务更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_job_paper_version (paper_id, index_version),
+    KEY idx_job_retry (status, is_delete, next_retry_time, id),
+    KEY idx_job_lease (status, is_delete, lease_until, id),
+    CONSTRAINT ck_job_is_delete CHECK (is_delete IN (0, 1)),
+    CONSTRAINT ck_job_embedding_dimension CHECK (embedding_dimension > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PDF解析与索引任务';
+
+CREATE TABLE outbox_event (
+    id BIGINT NOT NULL COMMENT 'Outbox事件ID，也作为MQ消息标识',
+    job_id BIGINT NOT NULL COMMENT '要派发的入库任务，关联paper_processing_job.id',
+    event_key VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '业务派发幂等键，例如job:123:dispatch:0',
+    event_type VARCHAR(64) NOT NULL DEFAULT 'paper_processing_requested' COMMENT '业务事件类型',
+    exchange_name VARCHAR(128) NOT NULL COMMENT '目标RabbitMQ交换机',
+    routing_key VARCHAR(128) NOT NULL COMMENT 'RabbitMQ路由键',
+    payload JSON NOT NULL COMMENT '消息载荷，包含jobId、paperId和处理版本，不包含PDF或凭据',
+    status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending、publishing、sent、failed',
+    publish_attempts INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '实际投递尝试次数',
+    max_attempts INT UNSIGNED NOT NULL DEFAULT 10 COMMENT '自动投递尝试上限',
+    next_attempt_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '下次允许投递时间UTC',
+    lease_token VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '投递领取令牌',
+    lease_until DATETIME(3) NULL COMMENT '投递租约到期时间UTC',
+    sent_time DATETIME(3) NULL COMMENT '确认已成功投递时间UTC',
+    error_message TEXT NULL COMMENT '最近投递错误摘要',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_outbox_event_key (event_key),
+    KEY idx_outbox_pending (status, is_delete, next_attempt_time, id),
+    KEY idx_outbox_lease (status, is_delete, lease_until, id),
+    KEY idx_outbox_job (job_id, is_delete, id),
+    CONSTRAINT ck_outbox_is_delete CHECK (is_delete IN (0, 1))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='可靠投递到RabbitMQ的事件';
+
+CREATE TABLE run_event (
+    id BIGINT NOT NULL COMMENT '事件记录主键，不是SSE序号',
+    run_id BIGINT NOT NULL COMMENT '所属问答任务ID，关联agent_run.id',
+    event_seq BIGINT UNSIGNED NOT NULL COMMENT '同一Run内递增的事件序号，从1开始，对应SSE id',
+    event_type VARCHAR(64) NOT NULL COMMENT 'run_started、retrieval_started、retrieval_completed及终态等',
+    payload JSON NOT NULL COMMENT '事件数据，终态可携带消息ID、最终正文及引用',
+    create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '事件创建时间UTC',
+    update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '事件更新时间UTC',
+    is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_run_event_sequence (run_id, event_seq),
+    KEY idx_run_event_retention (is_delete, create_time, id),
+    CONSTRAINT ck_run_event_is_delete CHECK (is_delete IN (0, 1)),
+    CONSTRAINT ck_run_event_sequence CHECK (event_seq >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='问答运行进度及SSE补发事件';

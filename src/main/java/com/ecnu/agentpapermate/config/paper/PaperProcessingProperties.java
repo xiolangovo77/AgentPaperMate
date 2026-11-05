@@ -1,4 +1,4 @@
-package com.ecnu.agentpapermate.config;
+package com.ecnu.agentpapermate.config.paper;
 
 import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.exception.ThrowUtils;
@@ -14,7 +14,7 @@ import org.springframework.util.StringUtils;
 @Data
 @Component
 @ConfigurationProperties(prefix = "paper.processing")
-public class PaperProcessingConfig {
+public class PaperProcessingProperties {
 
     /**
      * PDF 解析器及处理规则版本。
@@ -29,17 +29,22 @@ public class PaperProcessingConfig {
     /**
      * 单个片段的大小，计量单位由 chunkUnit 指定。
      */
-    private int chunkSize = 1000;
+    private int chunkSize = 600;
+
+    /**
+     * 包含标题前缀的分块硬上限。
+     */
+    private int maxChunkSize = 900;
 
     /**
      * 相邻片段的重叠长度，必须小于片段大小。
      */
-    private int chunkOverlap = 150;
+    private int chunkOverlap = 100;
 
     /**
-     * 切分计量单位：characters 表示字符，tokens 表示 Token。
+     * 当前结构分块器仅支持 tokens，使用 cl100k_base 估算。
      */
-    private String chunkUnit = "characters";
+    private String chunkUnit = "tokens";
 
     /**
      * Embedding 模型名称。
@@ -62,43 +67,26 @@ public class PaperProcessingConfig {
     private String esIndexName;
 
     /**
-     * 任务派发使用的 RabbitMQ 交换机名称。
-     */
-    private String exchangeName = "paper.processing";
-
-    /**
-     * 任务派发使用的 RabbitMQ 路由键。
-     */
-    private String routingKey = "paper.processing.requested";
-
-    /**
-     * 任务失败后允许的额外重试次数 - 消费者。
+     * 任务失败后允许的额外重试次数。
      */
     private int maxRetries = 3;
-
-    /**
-     * Outbox 事件自动投递的最大尝试次数 - 生产者。
-     */
-    private int maxPublishAttempts = 10;
 
     /**
      * 配置绑定完成后，在 Bean 初始化时检查必填配置、字段长度及参数范围。
      * 配置无效时阻止应用启动。
      */
     @PostConstruct
-    public void init() {
+    public void validate() {
         requireText(parserVersion, 64, "parser-version");
         requireText(chunkingVersion, 64, "chunking-version");
         requireText(embeddingModel, 128, "embedding-model");
         requireText(embeddingVersion, 64, "embedding-version");
         requireText(esIndexName, 128, "es-index-name");
-        requireText(exchangeName, 128, "exchange-name");
-        requireText(routingKey, 128, "routing-key");
         ThrowUtils.throwIf(embeddingDimension == null || embeddingDimension <= 0,
                 ErrorCode.SYSTEM_ERROR, "请配置paper.processing.embedding-dimension");
-        ThrowUtils.throwIf(chunkSize <= 0 || chunkOverlap < 0 || chunkOverlap >= chunkSize
-                        || !("characters".equals(chunkUnit) || "tokens".equals(chunkUnit))
-                        || maxRetries < 0 || maxPublishAttempts <= 0
+        ThrowUtils.throwIf(chunkSize < 16 || maxChunkSize < chunkSize || chunkOverlap < 0 || chunkOverlap >= chunkSize - 4
+                        || !"tokens".equals(chunkUnit)
+                        || maxRetries < 0
                         || !esIndexName.matches("[a-z0-9][a-z0-9._-]*"),
                 ErrorCode.SYSTEM_ERROR, "论文处理配置无效，请检查切分、重试和索引配置");
     }

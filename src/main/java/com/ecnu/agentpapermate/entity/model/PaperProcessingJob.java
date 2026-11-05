@@ -53,7 +53,7 @@ public class PaperProcessingJob implements Serializable {
     private String status;
 
     /**
-     * queued、parsing、chunking、embedding、indexing、verifying、done
+     * queued、awaiting_processor、parsing、chunking、embedding、indexing、verifying、done
      */
     @TableField("current_step")
     private String currentStep;
@@ -107,13 +107,13 @@ public class PaperProcessingJob implements Serializable {
     private Integer totalChunks;
 
     /**
-     * 已确认写入的片段数，重试时核对而非盲目累加
+     * 本次执行已确认写入 Elasticsearch 的片段数，每次重试从 0 开始计数
      */
     @TableField("indexed_chunks")
     private Integer indexedChunks;
 
     /**
-     * 已执行的额外重试次数
+     * 已安排的额外重试次数
      */
     @TableField("retry_count")
     private Integer retryCount;
@@ -131,13 +131,13 @@ public class PaperProcessingJob implements Serializable {
     private LocalDateTime nextRetryTime;
 
     /**
-     * 本次领取的唯一令牌，防止旧消费者回写
+     * 本次领取的唯一令牌，防止旧执行者回写
      */
     @TableField("lease_token")
     private String leaseToken;
 
     /**
-     * 消费者租约到期时间UTC，执行期间续约
+     * 执行者租约到期时间UTC，执行期间续约
      */
     @TableField("lease_until")
     private LocalDateTime leaseUntil;

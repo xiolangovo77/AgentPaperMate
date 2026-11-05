@@ -3,6 +3,35 @@ spring:
     name: AgentPaperMate
   profiles:
     active: dev
+  autoconfigure:
+    # 索引需包含论文来源和租约字段，由 PaperVectorWriter 按任务快照创建。
+    exclude: org.springframework.ai.autoconfigure.vectorstore.elasticsearch.ElasticsearchVectorStoreAutoConfiguration
+  ai:
+    dashscope:
+      # 只填原生 DashScope 主机地址，客户端会追加 /api/v1/services/...。
+      base-url: ${apm.dashscope.base-url}
+      api-key: ${apm.dashscope.api-key}
+      embedding:
+        enabled: true
+        options:
+          model: qwen3.7-text-embedding
+          # M6.1 不发送 dimension；此值用于任务和返回向量校验。qwen3.7 默认 1024。
+          dimensions: 1024
+          text-type: document
+      chat:
+        enabled: false
+      rerank:
+        enabled: false
+    vectorstore:
+      elasticsearch:
+        initialize-schema: true
+        index-name: agentpapermate-paper-chunks-qwen37-1024-v1
+        dimensions: ${spring.ai.dashscope.embedding.options.dimensions}
+        similarity: cosine
+  elasticsearch:
+    uris: ${apm.elasticsearch.url}
+    username: ${apm.elasticsearch.username}
+    password: ${apm.elasticsearch.password}
   servlet:
     multipart:
       max-file-size: 50MB
@@ -39,20 +68,34 @@ cos:
     region: ${cos.client.region}
     bucket: ${cos.client.bucket}
 
-# 任务创建时保存以下配置快照。模型、维度和索引必须与实际消费者匹配。
+# 任务创建时保存以下配置快照。模型、维度和索引必须与实际执行流程匹配。
 # 配置绑定后在 Bean 初始化时校验；必填项缺失或配置无效会阻止应用启动。
 paper:
   processing:
-    parser-version: unknown
-    chunking-version: unknown
-    chunk-size: 1000
-    chunk-overlap: 150
-    chunk-unit: characters
-    embedding-model: unknown
-    embedding-version: unknown
-    embedding-dimension: 1024
-    es-index-name: unknown
-    exchange-name: paper.processing
-    routing-key: paper.processing.requested
+    parser-version: 0.9.1-crf
+    chunking-version: grobid-structure-cl100k-est-v1
+    chunk-size: 600
+    max-chunk-size: 900
+    chunk-overlap: 100
+    chunk-unit: tokens
+    embedding-model: ${spring.ai.dashscope.embedding.options.model}
+    embedding-version: qwen37-1024-v1
+    embedding-dimension: ${spring.ai.vectorstore.elasticsearch.dimensions}
+    es-index-name: ${spring.ai.vectorstore.elasticsearch.index-name}
     max-retries: 3
-    max-publish-attempts: 10
+    scheduler:
+      enabled: true
+      poll-interval-ms: 2000
+      max-concurrent-jobs: 4
+      batch-size: 16
+      lease-seconds: 120
+      retry-delay-seconds: 30
+    pipeline:
+      # 配好 DASHSCOPE_API_KEY、GROBID 和 ES 后开启；关闭时不领取任务。
+      enabled: true
+      grobid-url: ${apm.grobid.url}
+      connect-timeout-seconds: 10
+      request-timeout-seconds: 90
+      heartbeat-seconds: 20
+      max-duration-seconds: 1800
+      embedding-batch-size: 10

@@ -16,6 +16,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
@@ -90,13 +93,22 @@ public class CosManager {
      * @return 已校验的文件名、大小和 SHA-256 哈希
      */
     public PaperFileInfo readPaper(String fileUrl, Long userId) {
+        return readPaper(fileUrl, userId, null);
+    }
+
+    public PaperFileInfo downloadPaper(String fileUrl, Long userId, Path destination) {
+        return readPaper(fileUrl, userId, destination);
+    }
+
+    private PaperFileInfo readPaper(String fileUrl, Long userId, Path destination) {
         String prefix = cosClientConfig.getHost().replaceAll("/+$", "") + "/";
         ThrowUtils.throwIf(fileUrl == null || fileUrl.length() > 2048 || !fileUrl.startsWith(prefix),
                 ErrorCode.PARAMS_ERROR, "请使用本系统上传后返回的固定文件URL");
         String key = fileUrl.substring(prefix.length());
         ThrowUtils.throwIf(!key.matches("papers/\\d{4}/\\d{2}/\\d{2}/[a-f0-9]{32}\\.pdf"),
                 ErrorCode.PARAMS_ERROR, "论文文件URL格式不正确，不允许临时签名或其他路径");
-        try (COSObject object = cosClient.getObject(cosClientConfig.getBucket(), key)) {
+        try (COSObject object = cosClient.getObject(cosClientConfig.getBucket(), key);
+             OutputStream output = destination == null ? OutputStream.nullOutputStream() : Files.newOutputStream(destination)) {
             ObjectMetadata metadata = object.getObjectMetadata();
             ThrowUtils.throwIf(!userId.toString().equals(metadata.getUserMetaDataOf(OWNER_ID)),
                     ErrorCode.NO_AUTH_ERROR, "文件不属于当前用户或缺少上传信息，请重新上传");
@@ -114,6 +126,7 @@ public class CosManager {
             ThrowUtils.throwIf(!Arrays.equals(header, "%PDF-".getBytes(StandardCharsets.US_ASCII)),
                     ErrorCode.PARAMS_ERROR, "文件内容不是PDF");
             digest.update(header);
+            output.write(header);
             long size = header.length;
             byte[] buffer = new byte[8192];
             int count;
@@ -121,6 +134,7 @@ public class CosManager {
                 size += count;
                 ThrowUtils.throwIf(size > PAPER_MAX_SIZE, ErrorCode.PARAMS_ERROR, "论文不能超过50MB");
                 digest.update(buffer, 0, count);
+                output.write(buffer, 0, count);
             }
             ThrowUtils.throwIf(size != expectedSize, ErrorCode.OPERATION_ERROR, "文件读取不完整，请重试");
             PaperFileInfo result = new PaperFileInfo();

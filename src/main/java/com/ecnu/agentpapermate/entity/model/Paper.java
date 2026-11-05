@@ -107,6 +107,12 @@ public class Paper implements Serializable {
     private Integer activeIndexVersion;
 
     /**
+     * 有效索引的执行尝试令牌，隔离旧执行者写入
+     */
+    @TableField("active_index_attempt")
+    private String activeIndexAttempt;
+
+    /**
      * 创建时间UTC
      */
     @TableField("create_time")

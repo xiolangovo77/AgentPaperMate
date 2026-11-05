@@ -1,0 +1,98 @@
+{
+  "mappings": {
+    "_meta": {},
+    "dynamic": "strict",
+    "properties": {
+      "id": {
+        "type": "keyword"
+      },
+      "content": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "en": {
+            "type": "text",
+            "analyzer": "english"
+          },
+          "cjk": {
+            "type": "text",
+            "analyzer": "cjk"
+          }
+        }
+      },
+      "embedding": {
+        "type": "dense_vector",
+        "dims": 1024,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "metadata": {
+        "type": "object",
+        "dynamic": "strict",
+        "properties": {
+          "ownerId": {
+            "type": "keyword"
+          },
+          "paperId": {
+            "type": "keyword"
+          },
+          "indexVersion": {
+            "type": "integer"
+          },
+          "attemptToken": {
+            "type": "keyword"
+          },
+          "chunkId": {
+            "type": "keyword"
+          },
+          "chunkIndex": {
+            "type": "integer"
+          },
+          "sectionTitle": {
+            "type": "keyword",
+            "ignore_above": 1024
+          },
+          "title": {
+            "type": "text"
+          },
+          "pageKnown": {
+            "type": "boolean"
+          },
+          "pageStart": {
+            "type": "integer"
+          },
+          "pageEnd": {
+            "type": "integer"
+          },
+          "embeddingModel": {
+            "type": "keyword"
+          },
+          "embeddingVersion": {
+            "type": "keyword"
+          },
+          "parserVersion": {
+            "type": "keyword"
+          },
+          "chunkingVersion": {
+            "type": "keyword"
+          },
+          "sectionId": {
+            "type": "keyword"
+          },
+          "blockTypes": {
+            "type": "keyword"
+          },
+          "sourceBlockIds": {
+            "type": "keyword"
+          },
+          "referenceIds": {
+            "type": "keyword"
+          },
+          "lowConfidence": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

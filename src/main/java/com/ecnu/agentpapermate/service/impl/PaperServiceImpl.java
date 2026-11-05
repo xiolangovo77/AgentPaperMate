@@ -6,17 +6,15 @@ import com.ecnu.agentpapermate.service.PaperService;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.ecnu.agentpapermate.config.PaperProcessingConfig;
+import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.entity.dto.paper.PaperAddRequest;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
-import com.ecnu.agentpapermate.entity.model.OutboxEvent;
 import com.ecnu.agentpapermate.entity.vo.paper.PaperAddVO;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.exception.ThrowUtils;
 import com.ecnu.agentpapermate.mange.CosManager;
 import com.ecnu.agentpapermate.mapper.PaperProcessingJobMapper;
-import com.ecnu.agentpapermate.mapper.OutboxEventMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -50,11 +48,6 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     private final PaperProcessingJobMapper jobMapper;
 
     /**
-     * 待投递事件数据访问接口。
-     */
-    private final OutboxEventMapper outboxMapper;
-
-    /**
      * COS 文件管理组件。
      */
     private final CosManager cosManager;
@@ -62,20 +55,20 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     /**
      * 论文处理配置，创建任务时复制为配置快照。
      */
-    private final PaperProcessingConfig processingConfig;
+    private final PaperProcessingProperties processingProperties;
 
     /**
-     * 任务配置和消息载荷的 JSON 序列化工具。
+     * 任务配置的 JSON 序列化工具。
      */
     private final ObjectMapper objectMapper;
 
     /**
-     * 数据库事务模板，确保论文、任务和事件同时保存。
+     * 数据库事务模板，确保论文和任务同时保存。
      */
     private final TransactionTemplate transactionTemplate;
 
     /**
-     * 保存论文，并在同一事务内创建处理任务和待投递事件。
+     * 保存论文，并在同一事务内创建处理任务。
      *
      * @param request 论文保存请求
      * @param userId  从登录态取得的当前用户 ID
@@ -113,11 +106,9 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 paper.setIsDelete((byte) 0);
                 requireInserted(paperMapper.insert(paper));
 
-                // 5、创建待执行任务及待投递事件，任一步失败都回滚
+                // 5、创建待执行任务，任一步失败都回滚
                 PaperProcessingJob job = buildJob(paper.getId(), now);
                 requireInserted(jobMapper.insert(job));
-                OutboxEvent event = buildEvent(paper.getId(), job.getId(), now);
-                requireInserted(outboxMapper.insert(event));
                 return buildPaperAddVO(paper, job);
             });
         } catch (DuplicateKeyException e) {
@@ -169,18 +160,18 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         job.setIndexVersion(1);
         job.setStatus("pending");
         job.setCurrentStep("queued");
-        job.setParserVersion(processingConfig.getParserVersion());
-        job.setChunkingVersion(processingConfig.getChunkingVersion());
-        job.setChunkingConfig(json(Map.of("chunkSize", processingConfig.getChunkSize(),
-                "chunkOverlap", processingConfig.getChunkOverlap(), "unit", processingConfig.getChunkUnit())));
-        job.setEmbeddingModel(processingConfig.getEmbeddingModel());
-        job.setEmbeddingVersion(processingConfig.getEmbeddingVersion());
-        job.setEmbeddingDimension(processingConfig.getEmbeddingDimension());
-        job.setEsIndexName(processingConfig.getEsIndexName());
+        job.setParserVersion(processingProperties.getParserVersion());
+        job.setChunkingVersion(processingProperties.getChunkingVersion());
+        job.setChunkingConfig(json(Map.of("chunkSize", processingProperties.getChunkSize(),
+                "chunkOverlap", processingProperties.getChunkOverlap(), "unit", processingProperties.getChunkUnit(), "tokenizer", "cl100k_base_estimate", "maxChunkSize", processingProperties.getMaxChunkSize())));
+        job.setEmbeddingModel(processingProperties.getEmbeddingModel());
+        job.setEmbeddingVersion(processingProperties.getEmbeddingVersion());
+        job.setEmbeddingDimension(processingProperties.getEmbeddingDimension());
+        job.setEsIndexName(processingProperties.getEsIndexName());
         job.setTotalChunks(0);
         job.setIndexedChunks(0);
         job.setRetryCount(0);
-        job.setMaxRetries(processingConfig.getMaxRetries());
+        job.setMaxRetries(processingProperties.getMaxRetries());
         job.setNextRetryTime(now);
         job.setCreateTime(now);
         job.setUpdateTime(now);
@@ -189,28 +180,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     }
 
     /**
-     * 构建任务首次派发事件，初始状态为 pending，等待投递器发送到 RabbitMQ。
-     */
-    private OutboxEvent buildEvent(Long paperId, Long jobId, LocalDateTime now) {
-        OutboxEvent event = new OutboxEvent();
-        event.setJobId(jobId);
-        event.setEventKey("job:" + jobId + ":dispatch:0");
-        event.setEventType("paper_processing_requested");
-        event.setExchangeName(processingConfig.getExchangeName());
-        event.setRoutingKey(processingConfig.getRoutingKey());
-        event.setPayload(json(Map.of("jobId", jobId, "paperId", paperId, "indexVersion", 1)));
-        event.setStatus("pending");
-        event.setPublishAttempts(0);
-        event.setMaxAttempts(processingConfig.getMaxPublishAttempts());
-        event.setNextAttemptTime(now);
-        event.setCreateTime(now);
-        event.setUpdateTime(now);
-        event.setIsDelete((byte) 0);
-        return event;
-    }
-
-    /**
-     * 将处理配置或消息载荷序列化为 JSON。
+     * 将处理配置序列化为 JSON。
      */
     private String json(Object value) {
         try {

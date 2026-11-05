@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.config;
 
+import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -11,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 验证处理配置在 Spring 完成属性绑定后、Bean 初始化时自动校验。
  */
-class PaperProcessingConfigTest {
+class PaperProcessingPropertiesTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withUserConfiguration(TestConfiguration.class)
@@ -27,7 +28,7 @@ class PaperProcessingConfigTest {
         contextRunner.withPropertyValues("paper.processing.embedding-model=test-model")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
-                    PaperProcessingConfig config = context.getBean(PaperProcessingConfig.class);
+                    PaperProcessingProperties config = context.getBean(PaperProcessingProperties.class);
                     assertThat(config.getEmbeddingModel()).isEqualTo("test-model");
                     assertThat(config.getEmbeddingDimension()).isEqualTo(1024);
                 });
@@ -45,19 +46,23 @@ class PaperProcessingConfigTest {
 
     @Test
     void invalidChunkingParametersPreventStartup() {
-        contextRunner.withPropertyValues(
+        for (String invalid : new String[]{"paper.processing.chunk-overlap=1000",
+                "paper.processing.chunk-overlap=596", "paper.processing.max-chunk-size=599",
+                "paper.processing.chunk-unit=characters"}) {
+            contextRunner.withPropertyValues(
                         "paper.processing.embedding-model=test-model",
-                        "paper.processing.chunk-overlap=1000")
+                        invalid)
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure())
                             .hasRootCauseInstanceOf(BusinessException.class)
                             .hasStackTraceContaining("论文处理配置无效");
                 });
+        }
     }
 
     @Configuration(proxyBeanMethods = false)
-    @EnableConfigurationProperties(PaperProcessingConfig.class)
+    @EnableConfigurationProperties(PaperProcessingProperties.class)
     static class TestConfiguration {
     }
 }

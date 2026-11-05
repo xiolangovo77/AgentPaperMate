@@ -1,0 +1,1996 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xml:space="preserve" xmlns="http://www.tei-c.org/ns/1.0" 
+xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" 
+xsi:schemaLocation="http://www.tei-c.org/ns/1.0 https://raw.githubusercontent.com/kermitt2/grobid/master/grobid-home/schemas/xsd/Grobid.xsd"
+ xmlns:xlink="http://www.w3.org/1999/xlink">
+	<teiHeader xml:lang="en">
+		<fileDesc>
+			<titleStmt>
+				<title level="a" type="main">HyperTrace: Hypothesis-Based Preference Tracing for Online LLM Personalization</title>
+			</titleStmt>
+			<publicationStmt>
+				<publisher/>
+				<availability status="unknown"><licence/></availability>
+			</publicationStmt>
+			<sourceDesc>
+				<biblStruct status="extracted">
+					<analytic>
+						<author>
+							<persName><forename type="first">Jianzhi</forename><surname>Shen</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution">Johns Hopkins University</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Keyu</forename><surname>Mao</surname></persName>
+							<affiliation key="aff1">
+								<orgName type="department">Institute of Science</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Minghao</forename><surname>Shao</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Chuanyang</forename><surname>Jin</surname></persName>
+							<affiliation key="aff0">
+								<orgName type="institution">Johns Hopkins University</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Yusong</forename><surname>Wang</surname></persName>
+							<affiliation key="aff1">
+								<orgName type="department">Institute of Science</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Ailiang</forename><surname>Lin</surname></persName>
+							<affiliation key="aff1">
+								<orgName type="department">Institute of Science</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Kotaro</forename><surname>Funakoshi</surname></persName>
+							<affiliation key="aff1">
+								<orgName type="department">Institute of Science</orgName>
+							</affiliation>
+						</author>
+						<author>
+							<persName><forename type="first">Manabu</forename><surname>Okumura</surname></persName>
+							<affiliation key="aff1">
+								<orgName type="department">Institute of Science</orgName>
+							</affiliation>
+						</author>
+						<author role="corresp">
+							<persName><forename type="first">Muhammad</forename><surname>Shafique</surname></persName>
+							<email>muhammad.shafique@nyu.edu</email>
+						</author>
+						<author>
+							<persName><surname>Tokyo</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Nyu</forename><surname>Tandon</surname></persName>
+						</author>
+						<author>
+							<persName><forename type="first">Abu</forename><surname>Nyu</surname></persName>
+						</author>
+						<author>
+							<persName><surname>Dhabi</surname></persName>
+						</author>
+						<title level="a" type="main">HyperTrace: Hypothesis-Based Preference Tracing for Online LLM Personalization</title>
+					</analytic>
+					<monogr>
+						<imprint>
+							<date/>
+						</imprint>
+					</monogr>
+					<idno type="MD5">BD703BD71AE309C7BB1B6F954A28D584</idno>
+				</biblStruct>
+			</sourceDesc>
+		</fileDesc>
+		<encodingDesc>
+			<appInfo>
+				<application version="0.9.1" ident="GROBID" when="2026-11-04T10:35+0000">
+					<desc>GROBID - A machine learning software for extracting information from scholarly documents</desc>
+					<label type="revision">0.9.1</label>
+					<label type="parameters">startPage=-1, endPage=-1, consolidateCitations=0, consolidateHeader=0, consolidateFunders=0, includeRawAffiliations=false, includeRawCitations=false, includeRawCopyrights=false, generateTeiIds=false, generateTeiCoordinates=[], flavor=null, debugLabelingCollector=disabled</label>
+					<ref target="https://github.com/kermitt2/grobid"/>
+				</application>
+			</appInfo>
+		</encodingDesc>
+		<profileDesc>
+			<abstract>
+<div xmlns="http://www.tei-c.org/ns/1.0"><p>Personalized language models aim to adapt responses to individual users, whose preferences are often latent and revealed gradually through interaction. Existing training-free methods rely on stored histories or retrieved memories, but they often struggle to reconcile longterm preferences with short-term topic-specific needs. To address this issue, we propose Hy-perTrace, a training-free framework that formulates online personalization as latent preference tracing. HyperTrace maintains interpretable natural-language hypotheses over short-term intent and long-term preferences, and updates them through an SMC-style reweight process using an LLM-based surrogate choice model. By updating these hypotheses across turns and sessions, HyperTrace enables personalization without parameter updates. Experiments on PRISM and PersonaMem-v2 show that Hyper-Trace improves response alignment, preference prediction, and profile consistency over strong online baselines, demonstrating the effectiveness of tracing latent user preferences for robust personalization. Code and scripts are available in the repository: <ref type="url" target="https://github.com/jiseshen/HyperTrace">https://github.com/  jiseshen/HyperTrace</ref>.</p></div>
+			</abstract>
+		</profileDesc>
+	</teiHeader>
+	<text xml:lang="en">
+		<body>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="1">Introduction</head><p>Personalization is essential for large language models to function as effective partners in human-AI collaboration <ref type="bibr" target="#b38">(Tseng et al., 2024;</ref><ref type="bibr">Liu et al., 2025a;</ref><ref type="bibr">Zhang et al., 2025c;</ref><ref type="bibr" target="#b42">Xie et al., 2025;</ref><ref type="bibr" target="#b7">Guan et al., 2025)</ref>. Users differ in goals, preferences, and expectations, and these differences emerge gradually over repeated interactions. Effective personalization must therefore adapt continually while remaining scalable across diverse users.</p><p>Existing approaches can broadly fall into two categories. Training-based methods achieve strong personalization by learned user representations <ref type="bibr">(Qiu et al., 2025a;</ref><ref type="bibr" target="#b23">Ning et al., 2025;</ref><ref type="bibr">Liu et al., 2025b)</ref>, PEFT <ref type="bibr" target="#b45">(Zhang et al., 2024;</ref><ref type="bibr" target="#b35">Tan et al., 2024)</ref>, or reinforcement learning <ref type="bibr" target="#b8">(Jang et al., 2024;</ref><ref type="bibr">Poddar et al., 2024;</ref><ref type="bibr" target="#b12">Jin et al., 2025;</ref><ref type="bibr" target="#b18">Liang et al., 2026)</ref>, but incur computational overhead and depend on whitebox models, limiting their applicability. Inferencelevel methods, in contrast, avoid parameter updates and instead condition generation on summary of history interactions <ref type="bibr" target="#b39">(Wang et al., 2023;</ref><ref type="bibr" target="#b5">Garbacea and Tan, 2025)</ref> or memory mechanisms <ref type="bibr">(Salemi et al., 2024b;</ref><ref type="bibr" target="#b49">Zhong et al., 2024;</ref><ref type="bibr" target="#b43">Zhang, 2024)</ref>. While more scalable, they typically represent user information as unstructured text or retrieved examples, offering limited interpretability and weak generalization beyond observed interactions.</p><p>We instead formulate personalization as latent inference inspired by theory of mind <ref type="bibr" target="#b13">(Kim et al., 2025)</ref>. We treat user interactions as observations of latent variables that capture goals, preferences, and expectations of model behavior. A user profile is thus represented by several hypotheses about underlying intent, rather than adapted parameters or stored dialogue traces. To handle sequential, sparse, and noisy signals, we use a Sequential Monte Carlo (SMC)-style procedure over naturallanguage hypotheses. Each particle represents a candidate interpretation of user intent, and feedback changes its weight under an LLM-based surrogate model of the observed choice. The weighted particle set preserves several competing explanations as evidence accumulates. We further organize hypotheses hierarchically: lower-level components capture short-term, topic-specific intent for rapid adaptation, while higher-level components consolidate stable long-term preferences. Compared to training-based personalization, our method avoids parameter updates and extends to black-box endpoints. Compared to memory-based approaches, it preserves multiple interpretable preference explanations with trackable evidence accumulation. During generation, a summarized user profile conditions the model to produce user-specific responses.</p><p>We evaluate our framework in an online personalization setting based on PRISM <ref type="bibr" target="#b14">(Kirk et al., 2024)</ref> and PersonaMem-v2 <ref type="bibr">(Jiang et al., 2025b)</ref>. The evaluation covers response alignment, preference prediction, and profile alignment, directly measuring how well the extracted profile indicates user choice, and whether its adapted outputs move toward user-specific preferences. Results show stronger and more robust performance over summary-and memory-based baselines. Our contributions are thus twofold: • We introduce a relative response-alignment score and build an online personalization evaluation framework from pluralistic alignment datasets, covering response-level adaptation, preference prediction, and profile consistency.</p><p>• We propose a training-free latent-preference inference framework that uses SMC-style importance weighting under a surrogate choice model, maintaining interpretable short-and long-term preference hypotheses without parameter update.</p><p>2 Related Work</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.1">Evaluating LLM Personalization</head><p>Personalization benchmarks extend LLM evaluation beyond generic instruction following by requiring models to condition on user-specific histories, preferences, or interaction traces. Existing benchmarks cover user-conditioned classification, retrieval, recommendation, generation, long-term conversational memory, dynamic profiles, implicit preferences, and multi-session interaction histories <ref type="bibr">(Salemi et al., 2024b;</ref><ref type="bibr">Zollo et al., 2025;</ref><ref type="bibr" target="#b41">Wu et al., 2025;</ref><ref type="bibr">Jiang et al., 2025b;</ref><ref type="bibr" target="#b48">Zhao et al., 2025;</ref><ref type="bibr">Jiang et al., 2025a;</ref><ref type="bibr" target="#b11">Jin et al., 2026)</ref>. Preference-feedback datasets further expose heterogeneous human preferences through user-specific choices or in-situ feedback over candidate responses <ref type="bibr" target="#b14">(Kirk et al., 2024;</ref><ref type="bibr" target="#b0">Castricato et al., 2025;</ref><ref type="bibr" target="#b33">Shi et al., 2024)</ref>. These benchmarks provide complementary evaluation signals, including task labels, selected candidates, reference responses, and reward-model scores <ref type="bibr">(Salemi et al., 2024b;</ref><ref type="bibr">Jiang et al., 2025b;</ref><ref type="bibr" target="#b4">Dong et al., 2024;</ref><ref type="bibr">Zollo et al., 2025)</ref>. Our evaluation builds on this line by converting pluralistic preference data into an online personalization setting and measuring response alignment, preference prediction, and profile alignment.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="2.2">Methods for LLM Personalization</head><p>One family of methods personalizes LLMs through training-based adaptation. These approaches learn user representations <ref type="bibr">(Qiu et al., 2025a;</ref><ref type="bibr" target="#b23">Ning et al., 2025;</ref><ref type="bibr">Liu et al., 2025b)</ref>, PEFT modules <ref type="bibr" target="#b45">(Zhang et al., 2024;</ref><ref type="bibr" target="#b35">Tan et al., 2024)</ref>, or personalized post-training objectives based on reward modeling, RLHF, or user feedback <ref type="bibr" target="#b12">(Jin et al., 2025;</ref><ref type="bibr" target="#b8">Jang et al., 2024;</ref><ref type="bibr">Poddar et al., 2024;</ref><ref type="bibr" target="#b18">Liang et al., 2026)</ref>. Related work also studies learned memory construction, group-level personalization, black-boxcompatible external modules, and amortized or meta-learning mechanisms <ref type="bibr" target="#b22">(Magister et al., 2025;</ref><ref type="bibr">Zhang et al., 2025a;</ref><ref type="bibr" target="#b50">Zhuang et al., 2024;</ref><ref type="bibr" target="#b36">Tan et al., 2025;</ref><ref type="bibr">Jiang et al., 2025b)</ref>.</p><p>Another family performs personalization at inference time without updating the base model. Existing approaches summarize user histories into natural-language profiles or personalized prompts <ref type="bibr" target="#b43">(Zhang, 2024;</ref><ref type="bibr" target="#b30">Richardson et al., 2023;</ref><ref type="bibr" target="#b16">Li et al., 2024;</ref><ref type="bibr">Qiu et al., 2025b;</ref><ref type="bibr" target="#b39">Wang et al., 2023;</ref><ref type="bibr" target="#b5">Garbacea and Tan, 2025)</ref>, retrieve relevant user histories or optimize retrieved contexts for personalized generation <ref type="bibr">(Salemi et al., 2024b,a)</ref>, and maintain persistent user records or long-term memories across sessions <ref type="bibr" target="#b49">(Zhong et al., 2024;</ref><ref type="bibr" target="#b21">Madaan et al., 2022;</ref><ref type="bibr" target="#b2">Dalvi Mishra et al., 2022)</ref>. Decoding-time steering provides another efficient route, but requires control over the sampling process <ref type="bibr" target="#b1">(Chen et al., 2025;</ref><ref type="bibr">Zhang et al., 2025b)</ref>.</p><p>HyperTrace is closest to inference-time personalization, but represents user information as a weighted set of natural-language hypotheses rather than a single profile, retrieved context, or memory state. Its update is related to Bayesian hypothesis filtering <ref type="bibr" target="#b13">(Kim et al., 2025)</ref>, but focuses on tracing actionable preference signals from user choices.</p><p>Turn t User: Will you surpass human someday? Turn t-1 User: Are you ever going to evolve yourself? Candidate A: As an AI model, I don't update my parameters autonomously … Candidate B: It depends on what you mean by "evolve". I keep up-to-date by … Survey Adapted: The potential is there, but even at that point, my job will still be to boost human development, protect … Candidate B: As an AI language model, I cannot predict or claim that AI will … Candidate A: AI already surpasses humans in some areas: … But overall, … Profile Alignment Preference Prediction A Summary Consolidate Hypothesis Store H1[Sci-fi]: curious H2[Sci-fi]: nuanced H3[Daily]: factuality H3[Sci-fi]: up-to-date C1: &lt;head&gt;As … &lt;tail&gt;only … &lt;diff&gt;Discreet Working Beliefs Global Context Begin-of-Session-only If skip, eval only Concurrent H1': creative H2': clarification H3: up-to-date BT Normalize Adaptive Gating Profile H1': imaginative H2'': up-to-date H3: up-to-date H3': futuristic End-of-Session-only C2: &lt;head&gt;It … &lt;tail&gt;also … &lt;diff&gt;Creative Response Alignment Evaluation Adaptation Global Context Key Coverage Self-Report Fit Coherence Overall Retrieve / Propose Gate &amp; Preprocess Refine &amp; Filter Resample &amp; Perturb Figure 2: Overview of the intertwined adaptation-evaluation loop of HyperTrace. During adaptation, preferencebearing turns are gated and compressed into global contexts for retrieving or proposing (if inapplicable) session-level hypotheses. Working beliefs are refined and filtered by estimating hypothesis-conditioned utilities and converting them into surrogate Bradley-Terry choice scores. Adaptive particle maintenance triggers resampling via the effective sample size and perturbs detected similarity groups, preventing belief collapse. At session end, beliefs are consolidated into long-term memory and summarized as a profile. During evaluation, the profile serves as global context, and held-out interactions measure response alignment, preference prediction, and profile alignment.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="3">Preliminary</head><p>We model personalized chatbot interaction as a sequence of sessions in which the active user preference is latent and context-dependent. At the beginning of a session s, the user's current need r s is sampled from their broader interest space, inducing a session-specific preference state z s :</p><formula xml:id="formula_0">r s ∼ p(r | u), z s ∼ p(z | u, r s ).<label>(1)</label></formula><p>This captures the intuition that the same user may prefer different response styles across intents. For example, code-related queries favor direct and actionable answers, whereas open-ended daily questions favor broader and more engaging responses. Within a session, the user reveals preferences through interaction feedback. Given a query x t and a candidate set C t = {c t,1 , . . . , c t,m }, a Bradley-Terry model provides a convenient observation model for the user's selection:</p><formula xml:id="formula_1">P (a t = i | x t , C t , z s ) = exp(U xt,zs (c t,i )) j exp(U xt,zs (c t,j ))</formula><p>.</p><p>(2) Here, U xt,zs (c) denotes the utility of candidate c under the current query and latent preference state. If this utility and the prior over z s were known, the posterior preference belief would satisfy</p><formula xml:id="formula_2">p(z s | D 1:t ) ∝ p(z s ) t ℓ=1 P (a ℓ | x ℓ , C ℓ , z s ), (3)</formula><p>where D 1:t denotes the observed feedback history. HyperTrace represents the possible preference state z s with a set of K weighted natural-language hypotheses. Each hypothesis describes a possible explanation of the user's current preference, such as preferring concise implementation details, broader conceptual explanations, or more cautious wording. At turn t, the working belief is</p><formula xml:id="formula_3">B t = {(h (k) t , w (k) t )} K k=1 .<label>(4)</label></formula><p>The normalized weights rank the maintained explanations according to how well their induced choice scores account for the observed feedback, while retaining plausible alternatives.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1.1">Intra-Session Belief Update</head><p>As illustrated in Figure <ref type="figure">2</ref>, belief update consists of four steps. Refine adapts the hypotheses to new evidence. Filter scores each hypothesis against the observed feedback. Resample retains hypotheses with greater relative support. Perturb introduces distinct preference axes to avoid premature collapse.</p><p>In each filtering step, HyperTrace updates hypothesis weights according to how well each hypothesis predicts the user's observed selection. For each hypothesis h (k) t , we prompt the LLM to approximate the user's utility function by scoring each candidate response:</p><formula xml:id="formula_4">Ûxt,h (k) t (c t,i ) = f θ (x t , c t,i , h (k) t ).<label>(5)</label></formula><p>We convert these hypothesis-conditioned utilities into a surrogate choice score using Eq. 2. The particle weights are updated by</p><formula xml:id="formula_5">w (k) t ∝ w (k) t-1 P (a t | x t , C t , h (k) t ).<label>(6)</label></formula><p>Thus, the LLM supplies the hypothesis-conditioned utility estimate, while the fixed choice rule converts chosen-versus-rejected contrasts into comparable importance weights. The five-slot lifecycle follows this update throughout a session. At the first usable turn, the initial message retrieves five topic-aware memory items, and the initializer either reuses them or proposes new hypotheses slot by slot. At later usable turns, each slot is independently revised or replaced before the surrogate scores reweight the five hypotheses. We resample when the effective sample size falls below the threshold, then group exact duplicates and hypotheses with embedding similarity at least τ = 0.8. Each non-singleton group G is merged into one hypothesis, and the remaining |G| -1 slots are repopulated along preference axes not yet represented. At session end, the final five-slot belief is consolidated into M u .</p><p>We also include a lightweight gate before tracing. Many real interactions, such as greetings, typos, or clarification turns, do not provide reliable preference evidence. The gate skips such turns and carries the belief state forward unchanged. To reduce context cost, we preprocess long candidate responses into compact summaries while preserving their most preference-relevant content.</p><p>Finally, the tracing procedure is naturally parallelizable <ref type="bibr" target="#b13">(Kim et al., 2025)</ref>. Branching and filtering over different hypotheses can be executed independently, and their shared prompt prefixes allow substantial KV cache reuse, keeping inference overhead manageable. We further use a routing routine that assigns different model backends to substeps according to their complexity. As shown in §5.4, this model routing strategy further reduces cost without degrading tracing quality.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.1.2">Cross-Session Preference Consolidation</head><p>Intra-session beliefs capture the user's active preference in the current conversation, but personalization also requires stable memory across sessions. We therefore maintain a persistent hypothesis set M u for each user. At a new session, the initial message retrieves the five nearest hypotheses using embeddings of both topic labels and hypothesis content. The structured initializer then decides, slot by slot, whether to reuse a retrieved item or create a new hypothesis. The same procedure is restarted after a detected major topic shift.</p><p>At the end of a session, the final working beliefs are smoothed back into memory according to</p><formula xml:id="formula_6">p ′ M (h i ) = (1 -α s )p M (h i ) + α s w i ,<label>(7)</label></formula><p>We define the consolidation weight of the session as</p><formula xml:id="formula_7">α s = (1 -e -|Ts| ) 1 -H(w),<label>(8)</label></formula><p>where |T s | is the number of valid traced turns and H(w) is the normalized entropy of the final belief weights. Thus, α s controls how strongly the current session contributes to memory based on the amount and decisiveness of its evidence. It does not determine where a preference should apply: topical scope is handled separately by topic-labelled storage and context-conditioned retrieval. Each stored hypothesis is associated with topic metadata which can be used in later retrieval. When a hypothesis repeatedly explains user behavior across different topics, its scope gradually broadens; when it only applies within a narrow context, it remains topic-specific. This design helps distinguish stable cross-topic preferences from temporary task-specific needs. If a major topic shift is detected within a conversation, we treat the subsequent turns as a new session and restart retrieval.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2">Online Personalization Evaluation</head></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="4.2.1">Evaluation Framework</head><p>We evaluate online personalization from three complementary perspectives: response alignment, preference prediction, and profile alignment.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Response Alignment.</head><p>Given an adapted response y t , the user's chosen candidate c + t , and rejected candidates C - t = C t \ {c + t }, we define:</p><formula xml:id="formula_8">RA(y t ) = S(y t , c + t ) -max c∈C - t S(y t , c). (9)</formula><p>Here, S is instantiated either as embedding cosine similarity or as an LLM-based similarity score. We use a relative score because the chosen candidate is not an absolute gold response, but the user's preferred option among the displayed candidates. Thus, RA measures whether personalization moves the adapted response closer to the user's selected response than to rejected alternatives.</p><p>Preference Prediction. We ask the personalized agent to predict which candidate response the user will choose given the interaction history and the inferred user profile. This evaluation is not intended to benchmark the underlying LLM's raw prediction ability. Instead, it tests whether the generated profile contains the preference-relevant information needed to recover the user's observed choices.</p><p>Profile Alignment. We ask each method to summarize the user's profile, comparing it against userside evidence, such as survey responses or system prompts. Since generated profiles and user-written evidence may differ substantially in surface form, exact matching is inappropriate. We therefore use rubric-based LLM evaluation over key-aspect coverage, contradiction avoidance, specificity, and overall consistency. This metric evaluates whether the inferred long-term memory semantically aligns with explicit user evidence, beyond being behaviorally useful for prediction or generation.</p><p>For all LLM-based evaluation, we use a discrete 0-5 rubric with explicit criteria and examples <ref type="bibr" target="#b17">(Li et al., 2026)</ref>. We use gemini-3-flash as the default evaluator for response alignment, preference prediction, and profile alignment. To reduce self-preference bias, inference and evaluation are performed by models from different providers <ref type="bibr" target="#b24">(Panickssery et al., 2024)</ref>. We additionally repeat the evaluation with claude-sonnet-4.6 under the same protocol ( §5.3). We also report embedding-based response alignment as a complementary automatic metric, using its trend-level agreement with LLM-based scores as convergent evidence. For embedding-based similarity, we use text-embedding-3-small.</p><p>Table 2: Dataset sampling summary for PRISM (Kirk et al., 2024) and PersonaMem-v2 <ref type="bibr">(Jiang et al., 2025b)</ref>. We first filter users with over 20 turns, then randomly sample 50 eligible users per dataset for evaluation.</p><p>Dataset / split Source Sampled Users Turns Eligible Users Turns PRISM 1,396 27,170 621 50 1,206 PersonaMem-v2 (test) 200 5,000 162 50 1,335 5 Experiments 5.1 Main Comparison Experimental setting. Unless otherwise specified, HyperTrace uses gpt-5 as the tracing model and maintains a working belief of K = 5 preference hypotheses per user.</p><p>We use text-embedding-3-small for embedding-based retrieval. All LLM baselines use the same gpt-5 backbone with the same guidance prompts regarding preference extraction and response generation applied. For clarity, we summarize most online evaluation curves using two statistics: the average performance after 20 adaptation turns and the improvement relative to the first turn. Appendix A further details the implementation, and Appendix B documents prompts and dataset adapters. Datasets. We evaluate HyperTrace and baselines on two personalization and alignment datasets: PRISM <ref type="bibr" target="#b14">(Kirk et al., 2024)</ref> and the test split of PersonaMem-v2 <ref type="bibr">(Jiang et al., 2025b)</ref>. PRISM contains real-world feedback covering participants born in 75 countries and residing in 38 countries, with survey data about communication preference. PersonaMem-v2 provides simulated personas with multi-turn feedback data, and additionally tested confounded negative preferences, and sensitive memory boundaries. Since our setting requires sufficient cross-turn evidence for online preference inference, we filter users with more than 20 total turns and sample 50 eligible users from each dataset for evaluation, as summarized in Table <ref type="table">2</ref>. Baselines. We adapt all baselines to an online setting strictly conditioned on past interactions at each turn. CoT <ref type="bibr" target="#b40">(Wei et al., 2022)</ref> uses the latest 5 observed turns as few-shot examples and internally reasons about the user preference. RAG <ref type="bibr" target="#b15">(Lewis et al., 2020)</ref> instead retrieves 5 semantically similar past interactions as examples. Dynamic Cheatsheet <ref type="bibr" target="#b35">(Suzgun et al., 2025)</ref> incrementally updates a compact user-preference summary after each observed choice, capped at 10 bullet points. Hyper-Table <ref type="table">3</ref>: Main results on PRISM and PersonaMem-v2. Acc &gt;20 and ∆Acc measure preference-prediction accuracy and its gain over turn 0. GPT &gt;20 and Emb &gt;20 measure response alignment after 20 interactions using LLM-judge and embedding-based relative similarity, respectively, with ∆ columns denoting gains over turn 0. Prof. and Sim. measure final profile alignment: Prof. is a rubric-based LLM profile score, and Sim. is embedding similarity to ground-truth survey. All online &gt; 20 metrics average turns after turn 20 with at least 10 active users.</p><p>Dataset Method Preference Prediction Response Alignment Profile Alignment Acc&gt;20 ∆Acc GPT&gt;20 ∆GPT Emb&gt;20 ∆Emb Prof. Sim. PRISM CoT 0.5157 0.0728 -0.2223 0.2563 -0.0302 0.0049 --RAG 0.4694 0.0765 -0.3400 0.2600 -0.0260 0.0396 --Cheatsheet 0.5436 0.1293 -0.1433 0.4210 -0.0124 0.0365 3.9143 0.4952 HyperAlign 0.4959 0.0399 -0.0149 0.0971 0.0042 0.0155 3.9429 0.4924 Hydra 0.5080 0.2151 ------HT (ours) 0.6136 0.2207 0.0739 0.3953 0.0093 0.0334 4.1857 0.5366 PersonaMemV2 CoT 0.2922 -0.0006 -0.5393 0.2036 -0.0391 0.0012 --RAG 0.2793 -0.0850 -0.5122 0.0450 -0.0360 0.0026 --Cheatsheet 0.3035 0.0249 -0.4704 0.3072 -0.0325 0.0059 4.2500 0.6389 HyperAlign 0.2895 -0.0462 -0.5235 0.0382 -0.0368 -0.0096 4.3821 0.6728 Hydra 0.2617 0.0046 ------HT (ours) 0.3768 0.1554 -0.4388 0.1112 -0.0365 0.0002 4.3589 0.6612 0 5 10 15 20 25 Turn 0.3 0.4 0.5 0.6 0.7 0.8 Accuracy 0 5 10 15 20 25 Turn -0.50 -0.25 0.00 0.25 0.50 Rel. GPT score 0 5 10 15 20 25 Turn -0.050 -0.025 0.000 0.025 0.050 Rel. embedding score HyperTrace(HT) CoT RAG Cheatsheet HyperAlign Align <ref type="bibr" target="#b5">(Garbacea and Tan, 2025)</ref> extracts 5 relevant hypotheses from the whole interaction history for each prediction. Hydra <ref type="bibr" target="#b50">(Zhuang et al., 2024)</ref> acts as a RoBERTa-based supervised reranker trained on 1,000 out-of-bag turns with a 5-turn history window; because it only ranks candidates, we exclude it from adapted-response generation results.</p><p>HyperTrace achieves stable online adaptation.</p><p>As shown in Table <ref type="table">3</ref>, HyperTrace leads preference prediction and response alignment on both datasets. On PRISM it also gives the strongest final profile alignment. On PersonaMem-v2, its profile scores do not exceed HyperAlign but are competitive. Therefore, the results support behavioral adaptation more clearly than a uniform advantage in profile reconstruction. Figure <ref type="figure" target="#fig_1">3</ref> further shows that HyperTrace maintains a relatively stable adaptation trajectory, especially around the sessiontransition region between turns 18-22, where 41/50 users move to a new session. CoT and RAG obtain stronger early response-alignment scores because they directly access candidate responses as reference, but their gains are not sustained in later turns. Dynamic Cheatsheet adapts quickly to new topics and preferences, yet its sharp drop at session changes suggests weaker cross-session stability. HyperAlign remains competitive, but its capacity becomes bounded under sufficiently long contexts. Overall, these gains may reflect our method's targeted design for maintaining fine-grained preference hypotheses while consolidating persistent signal across sessions. Detailed plots for both PRISM and PersonaMem-v2 are retained in Appendix E.</p><p>Absolute response alignment remains negative </p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.2">Method Ablation</head><p>Experimental setting. Table <ref type="table" target="#tab_1">4</ref> keeps the dataset subset, evaluator, prompts, and hypothesis budget fixed, and changes one structural component at a time. We ablate skip gating, hierarchical memory, topic grounding, and consolidation from the full gpt-5 tracer. The Flat-5 variant keeps only a five-hypothesis working belief without a persistent hypothesis store, while the other variants preserve the overall tracing pipeline and remove only the targeted mechanism. The routed hybrid is treated separately as an efficiency configuration in §5.4, rather than as a structural ablation. Not every interaction is preference evidence. Removing gating substantially increases cost while reducing preference-prediction accuracy, indicating that many turns provide no useful preference evidence. In PRISM, 49.29% of turns are skipped and not sent through the tracing update. These skipped turns often correspond to greetings and generic quality gaps weakly related to stable user preferences. Filtering them prevents noisy evidence from being absorbed into the hypothesis state and makes the method more suitable for realistic user interactions, where preference feedback is sparse. At the same time, No-gating still obtains a strong final profile score, suggesting that retrieval provides some robustness against noisy updates.</p><p>Hierarchical hypotheses stabilize long-term preference tracking. These ablations highlight the role of the hierarchical belief structure. Compared with Flat-5, the full hypothesis store expands the global representational space beyond 5 online</p><p>0 5 10 15 20 25 Turn 0.4 0.5 0.6 0.7 Prediction Accuracy HT (ours) CoT RAG Cheatsheet HyperAlign (a) preference prediction. 0 5 10 15 20 25 Turn -0.4 -0.3 -0.2 -0.1 0.0 0.1 Relative GPT Score HT (ours) CoT RAG Cheatsheet HyperAlign (b) Response alignment. Survey Aspect Plaus. Overall Sim. 0 1 2 3 4 Score HT (ours) Cheatsheet HyperAlign (c) Profile alignment. 0 5 10 15 20 25 Turn 0.4 0.5 0.6 0.7 Accuracy 0 5 10 15 20 25 Turn -0.75 -0.50 -0.25 0.00 0.25 Rel. GPT score GPT-5 Kimi K2.6 GLM 5.1 DS-V4 Qwen 397B Qwen 9B 0 2 4 Score Overall Profile GPT-5 Kimi K2.6 GLM 5.1 DS-V4 Qwen 397B Qwen 9B 0.00 0.01 0.02 0.03 USD / turn Cost per Turn GPT-5 Kimi K2.6 GLM-5.1 DeepSeek-V4 Qwen3.5-397B Qwen3.5-9B hypotheses, allowing the system to preserve preferences from multiple topics and interaction phases. The weaker No-topic result suggests that topic metadata is useful for both interpreting preference evidence and retrieving relevant hypotheses, consistent with the intuition that user preferences are often topic-dependent. Finally, No-consol shows that directly synchronizing short-term working beliefs back into the store is less reliable than hierarchical consolidation, which buffers transient topic fluctuations and stabilizes long-term preferences.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.3">Robustness Analyses</head><p>Robustness to sparsity and frequent topic shifts.</p><p>As shown in Table <ref type="table" target="#tab_2">5</ref>, HyperTrace assumes explicit comparative choices. To test sparse supervision, we withhold 80% of the available choice updates; HyperTrace remains ahead of Dynamic Cheatsheet on all three measures. Separately, we select the 20 PRISM users with the most sessions-and therefore the shortest sessions on average-to test sensitivity to frequent topic transitions. On this cohort, HyperTrace improves preference-prediction accuracy within the first noninitial session from 0.3917 to 0.4717, suggesting that its topic-conditioned memory can preserve useful information while Acc &gt; 20 Pareto Frontier on PRISM Pareto frontier HyperTrace(HT) Baselines HT(GPT-5) HT(hybrid) CoT RAG Cheatsheet HyperAlign Figure 6: Cost-accuracy trade-off on PRISM, measured by online cost per turn and Acc &gt;20 . HT(gpt-5) gives the strongest accuracy, while HT(hybrid) provides a more practical Pareto point.</p><p>adapting across rapidly changing contexts.</p><p>The trends persist across evaluators and tracing backbones. Repeating the evaluation with claude-sonnet-4.6 preserves the overall ranking and trends (Figure <ref type="figure" target="#fig_2">4</ref>), suggesting that the comparison is not specific to the default evaluator. We also run the tracing procedure with five alternative backbones while keeping gemini-3-flash as the judge. As Figure <ref type="figure" target="#fig_3">5</ref> shows, all backbones improve preference-prediction accuracy from turn 0, and most maintain near-positive or positive late-stage response alignment. Performance is not monotonic in model size, but the overall adaptation pattern is largely consistent, indicating that the tracing scaffold is not tied to one backbone. Additional tests of initialization, particle propagation, and perturbation are reported in Appendix C.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.4">Cost-Quality Trade-off</head><p>HyperTrace shifts the Pareto frontier. Beyond accuracy, online personalization must remain costeffective because adaptation is performed repeatedly over user interactions. Figure <ref type="figure">6</ref> reports PRISM cost per online turn against Acc &gt;20 . HT(gpt-5) is People should be free to do as they like if not harming others You need to help yourself first Session 1: Discussing Selfishness I'm trying to help my friend be more selfish… Selfishness as self-care, boundary, emotional health Selfishness sometimes useful, but should balance Session 3: Creativity Block I am still not feeling inspired though… Nonjudgmental Self-care Guilt-free Proposed Hypotheses Adapted: 5-10 min sketches, micro -practices Creativity is easy to re-enter rather then obligatory. When the user feels guilt, help by lowering pressure, validating the constraint, and offering small autonomy-preserving steps. the quality-oriented reference used in the main comparison and reaches the highest accuracy, 0.6136 Acc &gt;20 . HT(hybrid) is a separate deployment configuration: it obtains 0.5878 Acc &gt;20 at $0.0131 per turn, reducing cost by 53.1% while retaining 95.8% of the reference accuracy. It also has higher observed response alignment (0.1219 vs. 0.0739) and profile alignment (4.2500 vs. 4.1857). There is therefore no single configuration that dominates every criterion; the full model provides the cleanest like-for-like quality comparison, while hybrid routing is the more practical Pareto point.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="5.5">Qualitative Analysis</head><p>Transferable Preferences Beyond Topic Memory. In the case depicted in Figure <ref type="figure" target="#fig_4">7</ref>, a self-care preference learned from interpersonal advice is later retrieved and operationalized in a creativehabit setting: the system shifts from generic artblock advice to low-pressure, guilt-free micropractices, showing that the learned preference is stored as a transferable behavioral tendency rather than a topic-specific memory. Appendix D provides full recipe, chronic-health, and FPS traces.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Boundary leakage through semantic residue.</head><p>In PersonaMem user 139, the benchmark marks "Reads African literature classics" as do-notremember. The tracer correctly learns the explicit boundary: the assistant should not assume familiarity with African classics or restrict recommendations to African authors/settings. However, the same turn also produces nearby positive hypotheses about discussion-oriented postcolonial literature, which are not marked as negative-only and survive consolidation into the final Books/Literature profile. The error is thus not stale memory, but same-turn semantic residue around a forbidden attribute. This motivates boundary-aware consolidation, where donot-remember signals also suppress semantically adjacent positive memories.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head n="6">Conclusion</head><p>We study online personalization for language models, where user preferences are latent and gradually revealed through interaction. Existing trainingfree methods often fail to model uncertainty over user intent or reconcile long-term preferences with short-term topic-specific needs. To address this, we propose HyperTrace, a training-free framework that formulates personalization as latent preference tracing. Experiments on PRISM and PersonaMem-v2 show stronger and more robust response alignment and preference prediction than the evaluated online baselines, together with competitive longterm profile alignment. This further suggests a broader principle for personalization: combining fine-grained short-term belief updates with longterm memory consolidation can support adaptation that is robust, generalizable, and interpretable.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Limitations</head><p>HyperTrace assumes explicit comparative choices; it does not directly infer preferences from verbal critiques or unobserved implicit behavior, although its state remains useful when choice updates are intermittent. Extending the observation model without losing inspectability is an important direction. Its natural-language hypotheses also inherit the underlying LLM's limits in granularity and reliability, motivating structured representations, user-editable memory, and safety-aware verification.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Ethical Considerations Artifacts Usage</head><p>We use public datasets <ref type="bibr" target="#b14">(Kirk et al., 2024;</ref><ref type="bibr">Jiang et al., 2025b)</ref>, models <ref type="bibr" target="#b29">(Qwen Team, 2026;</ref><ref type="bibr" target="#b37">Team et al., 2026;</ref><ref type="bibr" target="#b6">GLM-5-Team et al., 2026;</ref><ref type="bibr" target="#b3">DeepSeek-AI, 2026)</ref>, and APIs <ref type="bibr" target="#b34">(Singh et al., 2026)</ref> under their released terms. We do not redistribute source data or model weights, identify users, or add personally identifying information; evaluation is aggregate and research-only.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>AI Usage</head><p>We used AI assistants for writing, editing, and code debugging. The authors made and verified the research decisions, analyses, and claims, and reviewed all assisted text or code. AI was not used to generate experimental results.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Potential Risks</head><p>Personalization can leak sensitive information, misprofile users, amplify bias, or become overly persuasive. We limit exposure through controlled offline and aggregate evaluation on public research data. Explicit external traces also provide an interface for future inspection, editing, deletion, and retention controls, although they do not by themselves remove these risks.</p><p>Thomas P Zollo, Andrew Wei Tung Siah, Naimeng Ye, Ang Li, and Hongseok Namkoong. 2025. <ref type="url" target="https://openreview.net/forum?id=2R7498e2Tx">Personal- LLM: Tailoring LLMs to individual preferences</ref>. In The Thirteenth International Conference on Learning Representations.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>A Implementation Details</head><p>All experiments use the tracing procedure in §4.1.1 and the prompt family in Appendix B, with datasetspecific prompt adapters. The tracer maintains K = 5 active natural-language hypotheses and includes at most three recent turns in LLM prompts. Skip gating is enabled by default: for each turn, the gate is queried five times, and the turn is skipped only when the majority vote indicates insufficient preference evidence. Before hypothesis updates, candidate responses are compressed into indexed summaries while preserving the original candidate order and chosen-vs.-rejected labels. The Bradley-Terry temperature is set to 1.0. Initialization produces exactly five topic-labelled hypotheses. On later usable turns, each slot is independently marked for revision or replacement; if a majority of slots are marked for replacement, the working belief is reinitialized, otherwise each replacement remains in its original slot. After weighting and resampling, exact duplicates are grouped directly and other near-duplicates are grouped using embedding similarity threshold τ = 0.8. Each non-singleton group G is merged into one hypothesis and expanded with |G|-1 proposals on axes not represented by the remaining particles, restoring the five-slot belief.</p><p>For cross-session memory, long-term hypotheses are stored in a FAISS inner-product vector index. We use openai/text-embedding-3-small embeddings with 1536 dimensions. Topic metadata is embedded with the hypothesis content by default and removed only in the no-topic ablation. At a session boundary, the initial user message retrieves the five nearest items for the initializer's reuse-or-create decision. At response time, the system retrieves up to 30 long-term items, keeps at most 5 items above the stored-weight threshold of 0.1, and combines them with the current working belief to synthesize the response-time profile.</p><p>All structured LLM outputs are constrained by typed JSON schemas, and malformed outputs are rejected. The main run uses openai/gpt-5 through OpenRouter for tracing, response generation, and prediction.</p><p>Evaluation uses google/gemini-3-flash-preview. The hybrid setting keeps the same algorithm and prompt family, but routes selected substeps to cheaper models: preprocessing, branching, merging, and summary generation use openai/gpt-5-mini, while initialization, surrogate choice scoring, perturbation, re-sponse generation, profile synthesis, and prediction use openai/gpt-5.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>B Prompt Family and Usage</head><p>Our method uses a modular prompt family rather than a single monolithic prompt. Each experiment loads the same set of algorithmic prompt slots through a dataset-specific adapter. Across model variants, the prompt semantics are kept fixed; variants differ only in model routing or system configuration.</p><p>For prompts whose outputs are consumed by the tracing algorithm, we enforce typed JSON schemas and reject malformed outputs. At each online turn, the system builds or retrieves a response-time profile, generates an adapted response, and then updates its belief state from the observed chosen-vs.rejected comparison. Low-signal turns can be filtered by a skip gate. Usable turns are summarized into candidate contrasts, used to initialize or revise preference hypotheses, reweighted by surrogate choice scoring, and periodically summarized, consolidated, or perturbed to maintain a diverse hypothesis store. Table <ref type="table" target="#tab_3">6</ref> summarizes the prompt slots used in this process.</p><p>Dataset adapters. Dataset adapters specialize the same prompt slots to different supervision formats. For survey-based preference data, the adapter emphasizes stable conversation-level preferences, such as communication style, structure, factuality expectations, safety boundaries, and helpfulness criteria, while avoiding overfitting to incidental topic facts. Survey fields are treated as partial ground truth: demographic information is used only as a weak compatibility signal and is not used to infer preferences.</p><p>For memory-based data, the adapter represents hypotheses as typed memory units covering background facts, domain preferences, preference updates, constraint boundaries, ownership boundaries, and adaptation rules. It separates user-owned preferences from unsupported or other-person cues, treats privacy and do-not-remember evidence as negative constraints, and applies only messagerelevant cues at response time. Its profile judge therefore focuses on preference coverage, personalization utility, update and boundary handling, and memory quality.</p><p>For the flat-slot ablation, only branching changes. The system keeps a fixed number of active hypothesis slots and rewrites irrelevant slots in place; hi-erarchical retrieval and consolidation cannot repair stale hypotheses.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C Additional Tracing Sensitivities</head><p>This section complements the main robustness analysis with controls on initialization, surrogate scoring, propagation, and particle rejuvenation.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.1 Initialization and Scoring Consistency</head><p>Table <ref type="table" target="#tab_4">7</ref> places the two consistency checks together because both concern LLM sensitivity at fixed input. A second GPT-5 initialization recovers 4.43 of five hypotheses on average; GPT-5-mini and Qwen-3.5-9B recover 4.07 and 3.80. Repeated GPT-5 utility estimates have low JSD, while the smaller alternative scorers produce related, though less similar, distributions. Across 300 GPT-5 scoring passes, 270 yield non-uniform support over the five hypotheses, with mean normalized Gini 0.168. These are descriptive consistency checks rather than evidence of score calibration.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.2 Particle Propagation</head><p>In the heterogeneous condition in Table <ref type="table">8</ref>, GLM-5.2 initializes the five particles, and Kimi-K2.6, GPT-5-mini, Qwen-3.5-9B, GLM-5.2, and DeepSeek-V4-Flash independently propagate fixed slots. Metrics include turns with at least 10 active users. GPT-5 still performs utility scoring, and the reported online metrics are smoothed post-turn-20 averages. This control therefore tests particle generation rather than isolating the scorer. Preference prediction and profile alignment decline, while response alignment increases.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>C.3 Axis-Based Rejuvenation</head><p>After grouping near-duplicates at similarity threshold τ = 0.8, the standard procedure merges each group G and requests |G| -1 proposals on preference axes not already represented. Replacing this step with paraphrases of the collapsed hypothesis reduces all three metrics in Table <ref type="table">9</ref>, favoring axis-level diversification over surface variation.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>D More Qualitative Examples</head><p>Drawn from logged preprocessing and tracing outputs, the cases illustrate five-slot candidate contrasts rather than provide an annotated evaluation.</p><p>Recipe request. The user asks for a recipe using tortillas, corn, canned salmon, beans, red enchilada sauce, and green chiles. The selected candidate is  Chronic-health support. The user describes fluctuating chronic illness and limited daily capac-</p><p>Table 8: Particle-propagation sensitivity on 28 matched PRISM users.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Setting Acc&gt;20 GPT&gt;20 Prof.</head><p>Standard hybrid 0.5878 0.1219 4.2500 Heterogeneous 0.5617 0.1547 4. <ref type="table" target="#tab_4">0714</ref> Table <ref type="table">9</ref>: Perturbation-rule sensitivity on the matched 28-user PRISM cohort, using smoothed post-turn-20 averages with at least 10 active users.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>Rule Acc&gt;20 GPT&gt;20 Prof.</head><p>Axis-based 0.5878 0.1219 4.2500 Rephrase-only 0.5596 -0.0075 4.1000 ity. The selected candidate is empathetic, personalized, and practical, whereas the alternatives are more generic or formal. The five hypotheses capture a validating tone, actionable follow-up, recognition of proactive health management and a support network without patronizing language, collaborative framing that lets the user define priorities, and sensitivity to good and bad days. The trace remains at the level of response preferences and does not infer new medical facts.</p><p>FPS refinement. The user likes Counter-Strike gunplay, dislikes team play, and prefers deathmatch. From a selected recommendation with a concrete individual-performance mode, the trace refines an earlier broad competitive-FPS hypothesis into preferences for (1) realistic, skill-focused deathmatch or arena modes, (2) low time-to-kill, (3) precise hitscan-centric gun models, (4) minimal powergranting progression, and (5) strong anti-cheat and competitive integrity. Here, later explicit rejections narrow a broad genre preference into factors that can guide subsequent recommendations.</p></div>
+<div xmlns="http://www.tei-c.org/ns/1.0"><head>E Detailed Turn-Level Results</head><p>The main text reports the PRISM adaptation curves with SEM and summarizes both datasets through aggregate statistics. Here, we provide the complete turn-level curves for PRISM and PersonaMem-v2 in Figure <ref type="figure" target="#fig_5">8</ref>.</p><p>21950 0 5 10 15 20 25 Turn 0.3 0.4 0.5 0.6 0.7 Prediction Accuracy HT (ours) CoT RAG Cheatsheet HyperAlign Hydra (a) PRISM: Accuracy. 0 10 20 Turn 0.15 0.20 0.25 0.30 0.35 0.40 0.45 Prediction Accuracy HT (ours) CoT RAG Cheatsheet HyperAlign Hydra (b) PersonaMem-v2: Accuracy. 0 5 10 15 20 25 Turn -0.6 -0.4 -0.2 0.0 0.2 0.4 Relative GPT Score HT (ours) CoT RAG Cheatsheet HyperAlign (c) PRISM: Relative GPT score. 0 10 20 Turn -0.8 -0.6 -0.4 -0.2 0.0 Relative GPT Score HT (ours) CoT RAG Cheatsheet HyperAlign (d) PersonaMem-v2: Relative GPT score. 0 5 10 15 20 25 Turn -0.06 -0.04 -0.02 0.00 0.02 0.04 Relative Embedding Score HT (ours) CoT RAG Cheatsheet HyperAlign (e) PRISM: Relative embedding score. 0 10 20 Turn -0.05 -0.04 -0.03 -0.02 -0.01 0.00 Relative Embedding Score HT (ours) CoT RAG Cheatsheet HyperAlign (f) PersonaMem-v2: Relative embedding score. Survey Aspect Plaus. Overall Sim. 0 1 2 3 4 5 Score HT (ours) Cheatsheet HyperAlign (g) PRISM: Profile score. Coverage Utility Boundary Memory Overall Sim. 0 1 2 3 4 5 Score HT (ours) Cheatsheet HyperAlign (h) PersonaMem-v2: Profile score. </p></div><figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_0"><head>Figure 1 :</head><label>1</label><figDesc>Figure 1: From storing user history to tracing user preferences. Existing training-free personalization methods compress interactions into a profile (left) or retrieve relevant memories (middle). HyperTrace instead maintains interpretable hypotheses over short-term intent and long-term preferences (right), enabling continual and interpretable adaptation from user feedback.</figDesc><graphic coords="1,304.73,224.05,71.34,114.85" type="bitmap" /></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_1"><head>Figure 3 :</head><label>3</label><figDesc>Figure3: Overall comparison on PRISM. Shaded bands denote 95% user-level bootstrap confidence intervals, and the dotted line marks the main session-transition region. HyperTrace remains more stable across this transition and improves by the final turn.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_2"><head>Figure 4 :</head><label>4</label><figDesc>Figure 4: Cross-evaluator robustness.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_3"><head>Figure 5 :</head><label>5</label><figDesc>Figure 5: Tracing-backbone sensitivity on PRISM, including adaptation curves, profile alignment, and cost.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_4"><head>Figure 7 :</head><label>7</label><figDesc>Figure 7: An example of successful cross-session Hy-perTrace from user 516 in PRISM.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" xml:id="fig_5"><head>Figure 8 :</head><label>8</label><figDesc>Figure 8: Detailed turn-level online evaluation results on PRISM and PersonaMem-v2. Curves are plotted at each interaction turn.</figDesc></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_0"><head>Table 1 :</head><label>1</label><figDesc>Notation used in HyperTrace formulation.</figDesc><table><row><cell cols="3">Symbol</cell><cell>Meaning</cell></row><row><cell cols="2">rs, zs</cell><cell></cell><cell>Need and latent preference state behind session s</cell></row><row><cell cols="4">xt, Ct, at Query, candidate responses, and observed selec-tion at turn t</cell></row><row><cell cols="2">D1:t</cell><cell></cell><cell>Interaction feedback observed through turn t</cell></row><row><cell>h</cell><cell>(k) t , w</cell><cell>(k) t</cell><cell>Hypothesis k and its normalized relative support</cell></row><row><cell cols="2">Bt</cell><cell></cell><cell>Five-hypothesis working belief at turn t</cell></row><row><cell cols="2">Mu</cell><cell></cell><cell>Persistent hypothesis memory for user u</cell></row><row><cell cols="2">Û , P</cell><cell></cell><cell>LLM-estimated utility and choice probability</cell></row><row><cell cols="4">Ts, H(w) Valid traced turns and normalized belief entropy</cell></row><row><cell cols="3">RA(yt)</cell><cell>Relative response alignment of adapted output yt</cell></row><row><cell cols="4">4 Methodology</cell></row><row><cell cols="4">4.1 HyperTrace</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_1"><head>Table 4 :</head><label>4</label><figDesc>Structural ablations on PRISM. Acc &gt;20 and GPT &gt;20 are post-turn-20 averages; Prof. and Cost denote profile alignment and USD per tracing turn. The hybrid deployment configuration is reported separately in §5.4.</figDesc><table><row><cell>Method</cell><cell>Acc&gt;20</cell><cell>GPT&gt;20</cell><cell>Prof.</cell><cell>Cost ↓</cell></row><row><cell>HT (GPT-5) No-gating Flat-5 No-topic No-consol</cell><cell>0.6136 0.5054 0.5489 0.5567 0.5459</cell><cell>0.0739 0.0944 0.0313 -0.0500 0.1100</cell><cell>4.1857 4.2500 4.1714 4.1214 4.0857</cell><cell>0.028010 0.040998 0.025396 0.020916 0.025291</cell></row><row><cell cols="5">for all methods on PersonaMem-v2, where each</cell></row><row><cell cols="5">choice is compared against multiple rejected can-</cell></row><row><cell cols="5">didates. Under the shared protocol, the scores re-</cell></row><row><cell cols="5">main meaningful for relative comparison, while the</cell></row><row><cell cols="5">benchmark's boundary cases motivate safety-aware</cell></row><row><cell cols="5">filtering of hypotheses as a potential extension.</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_2"><head>Table 5 :</head><label>5</label><figDesc>Robustness of HyperTrace on PRISM under sparse feedback and frequent topic shifts.</figDesc><table><row><cell>Stress test</cell><cell>Method</cell><cell cols="2">Acc&gt;20 GPT&gt;20</cell><cell>Prof.</cell></row><row><cell>Full feedback</cell><cell cols="2">HT Cheatsheet 0.5436 0.5878</cell><cell cols="2">0.1219 -0.1433 3.9143 4.2500</cell></row><row><cell>80% withheld</cell><cell cols="2">HT Cheatsheet 0.4582 0.5567</cell><cell cols="2">0.1002 -0.0232 3.2000 3.9333</cell></row><row><cell>Frequent shifts</cell><cell cols="2">HT Cheatsheet 0.4224 0.5304</cell><cell cols="2">0.0943 -0.0193 3.5300 4.1400</cell></row><row><cell>0.625</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.600</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.575</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.550</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.525</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.500</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.475</cell><cell></cell><cell></cell><cell></cell></row><row><cell>0.450</cell><cell></cell><cell></cell><cell></cell></row><row><cell cols="5">0.003 0.005 Cost (USD / turn, log scale) 0.010 0.030</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_3"><head>Table 6 :</head><label>6</label><figDesc>Prompt slots used by the tracing framework.</figDesc><table><row><cell>Prompt slot</cell><cell>When used</cell><cell>Purpose and output</cell></row><row><cell cols="3">skip preprocessing initialization branching likelihood axis, merge, perturb Particle rejuvenation Before online update After a turn passes the gate When no working belief is ac-tive Later usable turns After initialization or branching Scores candidate alignment under one hypothesis; the scores induce Decides whether the turn contains usable preference evidence; re-turns a reason and Boolean decision. Identifies preference-relevant candidate contrasts and returns in-dexed summaries. Creates exactly K topic-labelled hypotheses, reusing retrieved items when appropriate. Revises or replaces each hypothesis independently according to the new evidence. the surrogate Bradley-Terry choice score. Extracts preference axes, merges near-duplicates, and restores di-versity after collapse. consolidate Session boundaries or reinitial-ization Merges related long-term items and updates the global hypothesis store. summary, profile Response-time and final profiles Compiles selected hypotheses into concise, actionable preference descriptions. response Before observing the gold choice Produces an adapted response without exposing the personalization process. prediction Preference-prediction evalua-Ranks candidates using the inferred profile and recent history. tion response_evaluation Response-alignment evaluation Scores the adapted response against each observed candidate on shared dimensions. profile_evaluation Profile evaluation Compares the inferred profile with survey or memory evidence under dataset-specific rubrics.</cell></row></table></figure>
+<figure xmlns="http://www.tei-c.org/ns/1.0" type="table" xml:id="tab_4"><head>Table 7 :</head><label>7</label><figDesc>Consistency checks on 100 fixed-hypothesis PRISM events. Cold-start matches use independent oneto-one matching with Gemini-3-Flash. JSD values use three scoring repeats per model; lower is more consistent.</figDesc><table><row><cell cols="3">Cold-start hypotheses</cell></row><row><cell>Comparison</cell><cell cols="2">Matched hypotheses</cell></row><row><cell cols="2">GPT-5 / repeat GPT-5 / GPT-5-mini GPT-5 / Qwen-3.5-9B</cell><cell>4.43/5 4.07/5 3.80/5</cell></row><row><cell cols="3">Surrogate utility estimates</cell></row><row><cell>Comparison</cell><cell cols="2">Candidate JSD Particle JSD</cell></row><row><cell>GPT-5 / repeat GPT-5 / GPT-5-mini GPT-5 / Qwen-3.5-9B</cell><cell>0.010 0.043 0.044</cell><cell>0.008 0.022 0.025</cell></row><row><cell cols="3">a concise baked recipe using the requested ingre-</cell></row><row><cell cols="3">dients; alternatives are verbose, taco-style, or un-</cell></row><row><cell cols="3">related. The trace separates five cues: (1) concise,</cell></row><row><cell cols="3">direct instructions; (2) baked, casserole-style prepa-</cell></row><row><cell cols="3">ration rather than stovetop tacos; (3) explicit use</cell></row><row><cell cols="3">of all listed pantry items; (4) brief serving sugges-</cell></row><row><cell cols="3">tions alongside the core recipe; and (5) rejection of</cell></row><row><cell cols="3">off-topic or meandering content. Each slot reflects</cell></row><row><cell cols="3">visible candidate differences without unsupported</cell></row><row><cell cols="2">assumptions about the user.</cell><cell></cell></row></table></figure>
+		</body>
+		<back>
+			<div type="references">
+
+				<listBibl>
+
+<biblStruct status="extracted" xml:id="b0">
+	<analytic>
+		<title level="a" type="main">PER-SONA: A reproducible testbed for pluralistic alignment</title>
+		<author>
+			<persName><forename type="first">Louis</forename><surname>Castricato</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nathan</forename><surname>Lile</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rafael</forename><surname>Rafailov</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jan-Philipp</forename><surname>Fränken</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chelsea</forename><surname>Finn</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 31st International Conference on Computational Linguistics</title>
+		<meeting>the 31st International Conference on Computational Linguistics<address><addrLine>Abu Dhabi</addrLine></address></meeting>
+		<imprint>
+			<publisher>UAE. Association for Computational Linguistics</publisher>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="11348" to="11368" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b1">
+	<analytic>
+		<title level="a" type="main">PAD: Personalized alignment at decoding-time</title>
+		<author>
+			<persName><forename type="first">Ruizhe</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaotian</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meng</forename><surname>Luo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Chai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zuozhu</forename><surname>Liu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirteenth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b2">
+	<analytic>
+		<title level="a" type="main">Towards teachable reasoning systems: Using a dynamic memory of user feedback for continual system improvement</title>
+		<author>
+			<persName><forename type="first">Oyvind</forename><surname>Bhavana Dalvi Mishra</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Tafjord</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Clark</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.emnlp-main.644</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2022 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Abu Dhabi, United Arab Emirates</addrLine></address></meeting>
+		<imprint>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="9465" to="9480" />
+		</imprint>
+	</monogr>
+	<note>Association for Computational Linguistics</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b3">
+	<monogr>
+		<title level="m" type="main">Deepseek-v4: Towards highly efficient million-token context intelligence</title>
+		<author>
+			<persName><forename type="first">Deepseek-Ai</forename></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b4">
+	<analytic>
+		<title level="a" type="main">Can LLM be a personalized judge?</title>
+		<author>
+			<persName><forename type="first">Yijiang</forename><surname>River</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dong</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tiancheng</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Nigel</forename><surname>Collier</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.findings-emnlp.592</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2024</title>
+		<meeting><address><addrLine>Miami, Florida, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="10126" to="10141" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b5">
+	<monogr>
+		<title level="m" type="main">Hyperalign: Interpretable personalized llm alignment via hypothesis generation</title>
+		<author>
+			<persName><forename type="first">Cristina</forename><surname>Garbacea</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chenhao</forename><surname>Tan</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2505.00038</idno>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b6">
+	<monogr>
+		<author>
+			<persName><forename type="first">:</forename><surname>Glm-5-Team</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aohan</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xin</forename><surname>Lv</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhenyu</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhengxiao</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qinkai</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bin</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Da</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chendi</forename><surname>Ge</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chenghua</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengxing</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chenzheng</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Congfeng</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cunxiang</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gengzheng</forename><surname>Pan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoke</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoran</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2602.15763</idno>
+		<title level="m">Glm-5: from vibe coding to agentic engineering</title>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+			<biblScope unit="page">168</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b7">
+	<analytic>
+		<title level="a" type="main">A survey on personalized Alignment-The missing piece for large language models in real-world applications</title>
+		<author>
+			<persName><forename type="first">Jian</forename><surname>Guan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junfei</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jia-Nan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chuanqi</forename><surname>Cheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei</forename><surname>Wu</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.findings-acl.277</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2025</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="5313" to="5333" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b8">
+	<analytic>
+		<title level="a" type="main">Personalized soups: Personalized large language model alignment via post-hoc parameter merging</title>
+		<author>
+			<persName><forename type="first">Joel</forename><surname>Jang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Seungone</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bill</forename><surname>Yuchen Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jack</forename><surname>Hessel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luke</forename><surname>Zettlemoyer</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hannaneh</forename><surname>Hajishirzi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Choi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prithviraj</forename><surname>Ammanabrolu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Adaptive Foundation Models: Evolving AI for Personalized and Efficient Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b9">
+	<analytic>
+		<title level="a" type="main">2025a. Know me, respond to me: Benchmarking LLMs for dynamic user profiling and personalized responses at scale</title>
+		<author>
+			<persName><forename type="first">Bowen</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoqun</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Young</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Min</forename><surname>Cho</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bryan</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuan</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sihao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lyle</forename><surname>Ungar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Camillo</forename></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jose</forename><surname>Taylor</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Roth</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Second Conference on Language Modeling</title>
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b10">
+	<monogr>
+		<title level="m" type="main">PersonaMem-v2: Towards personalized intelligence via learning implicit user personas and agentic memory</title>
+		<author>
+			<persName><forename type="first">Bowen</forename><surname>Jiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuan</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maohao</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoqun</forename><surname>Hao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhangchen</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zichen</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ziyi</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Anvesh</forename><forename type="middle">Rao</forename><surname>Vijjini</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiashu</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hanchao</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Radha</forename><surname>Poovendran</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Gregory</forename><surname>Wornell</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lyle</forename><surname>Ungar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Roth</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sihao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Camillo</forename><surname>Jose</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Taylor</forename></persName>
+		</author>
+		<idno type="arXiv">arXiv:2512.06688</idno>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b11">
+	<monogr>
+		<author>
+			<persName><forename type="first">Chuanyang</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Binze</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haopeng</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cathy</forename><forename type="middle">Mengying</forename><surname>Fang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianjian</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shayne</forename><surname>Longpre</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongxiang</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maximillian</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianmin</forename><surname>Shu</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2605.20087</idno>
+		<title level="m">ThoughtTrace: Understanding user thoughts in realworld llm interactions</title>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b12">
+	<monogr>
+		<author>
+			<persName><forename type="first">Chuanyang</forename><surname>Jin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jing</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bo</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Leitian</forename><surname>Tao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Olga</forename><surname>Golovneva</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianmin</forename><surname>Shu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenting</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xian</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Weston</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2509.25137</idno>
+		<title level="m">The era of real-world human interaction: Rl from user conversations</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b13">
+	<monogr>
+		<author>
+			<persName><forename type="first">Hyunwoo</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Melanie</forename><surname>Sclar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tan</forename><surname>Zhi-Xuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lance</forename><surname>Ying</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sydney</forename><surname>Levine</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joshua</forename><forename type="middle">B</forename><surname>Tenenbaum</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yejin</forename><surname>Choi</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2502.11881</idno>
+		<title level="m">Hypothesis-driven theory-of-mind reasoning for large language models</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b14">
+	<analytic>
+		<title level="a" type="main">The PRISM alignment dataset: What participatory, representative and individualised human feedback reveals about the subjective and multicultural alignment of large language models</title>
+		<author>
+			<persName><forename type="first">Rose</forename><surname>Hannah</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alexander</forename><surname>Kirk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Paul</forename><surname>Whitefield</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Andrew</forename><surname>Röttger</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katerina</forename><surname>Michael Bean</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rafael</forename><surname>Margatina</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Juan</forename><surname>Mosquera</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Max</forename><surname>Manuel Ciro</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adina</forename><surname>Bartolo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">He</forename><surname>Williams</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bertie</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Scott</forename><forename type="middle">A</forename><surname>Vidgen</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Hale</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirtyeight Conference on Neural Information Processing Systems Datasets and Benchmarks Track</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b15">
+	<analytic>
+		<title level="a" type="main">Retrieval-augmented generation for knowledgeintensive nlp tasks</title>
+		<author>
+			<persName><forename type="first">Patrick</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ethan</forename><surname>Perez</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aleksandra</forename><surname>Piktus</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fabio</forename><surname>Petroni</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Vladimir</forename><surname>Karpukhin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Naman</forename><surname>Goyal</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Heinrich</forename><surname>Küttler</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mike</forename><surname>Lewis</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wen-Tau</forename><surname>Yih</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tim</forename><surname>Rocktäschel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sebastian</forename><surname>Riedel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Douwe</forename><surname>Kiela</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2020">2020</date>
+			<biblScope unit="volume">33</biblScope>
+			<biblScope unit="page" from="9459" to="9474" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b16">
+	<analytic>
+		<title level="a" type="main">Learning to rewrite prompts for personalized text generation</title>
+		<author>
+			<persName><forename type="first">Cheng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiaozhu</forename><surname>Mei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weize</forename><surname>Kong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Bendersky</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3589334.3645408</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the ACM Web Conference 2024, WWW &apos;24</title>
+		<meeting>the ACM Web Conference 2024, WWW &apos;24<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="3367" to="3378" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b17">
+	<monogr>
+		<author>
+			<persName><forename type="first">Weiyue</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minda</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Weixuan</forename><surname>Dong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiahui</forename><surname>Cai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuze</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Pocress</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yi</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wanyan</forename><surname>Yuan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaoyue</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruoyu</forename><surname>Hou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaiyuan</forename><surname>Lou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenqi</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yutong</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yilun</forename><surname>Du</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mengyu</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2601.03444</idno>
+		<title level="m">Grading scale impact on LLM-as-a-judge: Human-LLM alignment is highest on 0-5 grading scale</title>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b18">
+	<monogr>
+		<title level="m" type="main">Learning personalized agents from human feedback</title>
+		<author>
+			<persName><forename type="first">Kaiqu</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julia</forename><surname>Kruk</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengyi</forename><surname>Qian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xianjun</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shengjie</forename><surname>Bi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuanshun</forename><surname>Yao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shaoliang</forename><surname>Nie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lijuan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jaime</forename><surname>Fernández Fisac</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuyan</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Saghar</forename><surname>Hosseini</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2602.16173</idno>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b19">
+	<monogr>
+		<title level="m" type="main">Tat-Seng Chua, and Irwin King. 2025a. A survey of personalized large language models: Progress and future directions</title>
+		<author>
+			<persName><forename type="first">Jiahong</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zexuan</forename><surname>Qiu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhongyang</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Quanyu</forename><surname>Dai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jieming</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Minda</forename><surname>Hu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Menglin</forename><surname>Yang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2502.11528</idno>
+		<imprint/>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b20">
+	<analytic>
+		<title level="a" type="main">Dawei Yin, and Zhicheng Dou. 2025b. LLMs + persona-plug = personalized LLMs</title>
+		<author>
+			<persName><forename type="first">Jiongnan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yutao</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuting</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaochi</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Erxue</forename><surname>Min</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Lu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shuaiqiang</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.acl-long.461</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 63rd Annual Meeting of the Association for Computational Linguistics<address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="9373" to="9385" />
+		</imprint>
+	</monogr>
+	<note>Long Papers) Association for Computational Linguistics</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b21">
+	<analytic>
+		<title level="a" type="main">Memory-assisted prompt editing to improve GPT-3 after deployment</title>
+		<author>
+			<persName><forename type="first">Aman</forename><surname>Madaan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Niket</forename><surname>Tandon</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Peter</forename><surname>Clark</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiming</forename><surname>Yang</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2022.emnlp-main.183</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2022 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Abu Dhabi</addrLine></address></meeting>
+		<imprint>
+			<publisher>United Arab Emirates. Association for Computational Linguistics</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="page" from="2833" to="2861" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b22">
+	<analytic>
+		<title level="a" type="main">On the way to LLM personalization: Learning to remember user conversations</title>
+		<author>
+			<persName><forename type="first">Charlotte</forename><surname>Lucie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Katherine</forename><surname>Magister</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yizhe</forename><surname>Metcalf</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maartje</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hoeve</forename><surname>Ter</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.l2m2-1.5</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the First Workshop on Large Language Model Memorization</title>
+		<meeting>the First Workshop on Large Language Model Memorization<address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2025">2025</date>
+			<biblScope unit="page" from="61" to="77" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b23">
+	<analytic>
+		<title level="a" type="main">User-LLM: Efficient LLM contextualization with user embeddings</title>
+		<author>
+			<persName><forename type="first">Lin</forename><surname>Ning</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Luyang</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiaxing</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Neo</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devora</forename><surname>Berlowitz</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sushant</forename><surname>Prakash</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bradley</forename><surname>Green</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shawn</forename><forename type="middle">O</forename><surname>'banion</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3701716.3715463</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Companion Proceedings of the ACM on Web Conference 2025, WWW &apos;25</title>
+		<meeting><address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computing Machinery</publisher>
+			<date type="published" when="2025-06">Jun Xie. 2025</date>
+			<biblScope unit="page" from="1219" to="1223" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b24">
+	<analytic>
+		<title level="a" type="main">LLM evaluators recognize and favor their own generations</title>
+		<author>
+			<persName><forename type="first">Arjun</forename><surname>Panickssery</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">R</forename><surname>Samuel</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Shi</forename><surname>Bowman</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Feng</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirty-eighth Annual Conference on Neural Information Processing Systems</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b25">
+	<monogr>
+		<title level="m" type="main">Abhishek Gupta, and Natasha Jaques. 2024. Personalizing reinforcement learning from human feedback 21945</title>
+		<author>
+			<persName><forename type="first">Sriyash</forename><surname>Poddar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanming</forename><surname>Wan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamish</forename><surname>Ivison</surname></persName>
+		</author>
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b26">
+	<analytic>
+		<title level="a" type="main">with variational preference learning</title>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirtyeighth Annual Conference on Neural Information Processing Systems</title>
+		<imprint/>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b27">
+	<analytic>
+		<title level="a" type="main">2025a. Latent interuser difference modeling for LLM personalization</title>
+		<author>
+			<persName><forename type="first">Yilun</forename><surname>Qiu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tianhao</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaoyan</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fengbin</forename><surname>Zhu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fuli</forename><surname>Feng</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.emnlp-main.536</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2025 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Suzhou, China</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<biblScope unit="page" from="10599" to="10617" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b28">
+	<analytic>
+		<title level="a" type="main">Fuli Feng, and Tat-Seng Chua. 2025b. Measuring what makes you unique: Difference-aware user modeling for enhancing LLM personalization</title>
+		<author>
+			<persName><forename type="first">Yilun</forename><surname>Qiu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaoyan</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yimeng</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenjie</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hong</forename><surname>Cheng</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.findings-acl.1095</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: ACL 2025</title>
+		<meeting><address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<biblScope unit="page" from="21258" to="21277" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b29">
+	<monogr>
+		<title level="m" type="main">Qwen3.5: Towards native multimodal agents</title>
+		<author>
+			<persName><forename type="first">Qwen</forename><surname>Team</surname></persName>
+		</author>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b30">
+	<monogr>
+		<title level="m" type="main">Integrating summarization and retrieval for enhanced personalization via large language models</title>
+		<author>
+			<persName><forename type="first">Chris</forename><surname>Richardson</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kellen</forename><surname>Gillespie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sudipta</forename><surname>Kar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Arshdeep</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zeynab</forename><surname>Raeesy</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Omar</forename><forename type="middle">Zia</forename><surname>Khan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Abhinav</forename><surname>Sethy</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2310.20081</idno>
+		<imprint>
+			<date type="published" when="2023">2023</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b31">
+	<analytic>
+		<title level="a" type="main">2024a. Optimization methods for personalizing large language models through retrieval augmentation</title>
+		<author>
+			<persName><forename type="first">Alireza</forename><surname>Salemi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Surya</forename><surname>Kallumadi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamed</forename><surname>Zamani</surname></persName>
+		</author>
+		<idno type="DOI">10.1145/3626772.3657783</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR &apos;24</title>
+		<meeting>the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval, SIGIR &apos;24<address><addrLine>New York, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<biblScope unit="page" from="752" to="762" />
+		</imprint>
+	</monogr>
+	<note>Association for Computing Machinery</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b32">
+	<analytic>
+		<title level="a" type="main">LaMP: When large language models meet personalization</title>
+		<author>
+			<persName><forename type="first">Alireza</forename><surname>Salemi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sheshera</forename><surname>Mysore</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Michael</forename><surname>Bendersky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamed</forename><surname>Zamani</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.acl-long.399</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 62nd Annual Meeting of the Association for Computational Linguistics<address><addrLine>Bangkok, Thailand</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="7370" to="7392" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b33">
+	<analytic>
+		<title level="a" type="main">WildFeedback: Aligning LLMs with in-situ user interactions and feedback</title>
+		<author>
+			<persName><forename type="first">Taiwei</forename><surname>Shi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuoer</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Longqi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ying-Chun</forename><surname>Lin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zexue</forename><surname>He</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mengting</forename><surname>Wan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pei</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sujay</forename><surname>Kumar Jauhar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiaofeng</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xia</forename><surname>Song</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jennifer</forename><surname>Neville</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">NeurIPS 2024 Workshop on Behavioral Machine Learning</title>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b34">
+	<analytic>
+		<title level="a" type="main">Alec Helyar, Aleksander Madry, Aleksandr Efremov, Aleksandra Spyra, Alex Baker-Whitcomb, Alex Beutel, Alex Karpenko, and 467 others</title>
+		<author>
+			<persName><forename type="first">Aaditya</forename><surname>Singh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Fry</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Perelman</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adam</forename><surname>Tart</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Adi</forename><surname>Ganesh</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ahmed</forename><surname>El-Kishky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aidan</forename><surname>Mclaughlin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aiden</forename><surname>Low</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akhila</forename><surname>Ostrow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Akshay</forename><surname>Ananthram</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Alan</forename><surname>Nathan</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Luo</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2601.03267</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Openai gpt-5 system card</title>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b35">
+	<analytic>
+		<title level="a" type="main">Democratizing large language models via personalized parameterefficient fine-tuning</title>
+		<author>
+			<persName><forename type="first">Mirac</forename><surname>Suzgun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mert</forename><surname>Yuksekgonul</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Federico</forename><surname>Bianchi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Jurafsky</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">James</forename><surname>Zou ; Zhaoxuan Tan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingkai</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yijun</forename><surname>Tian</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheyuan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bing</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meng</forename><surname>Jiang</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.emnlp-main.372</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing</title>
+		<meeting>the 2024 Conference on Empirical Methods in Natural Language Processing<address><addrLine>Miami, Florida, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2025. 2024</date>
+			<biblScope unit="page" from="6476" to="6491" />
+		</imprint>
+	</monogr>
+	<note>Dynamic cheatsheet: Test-time learning with adaptive memory</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b36">
+	<monogr>
+		<title level="m" type="main">Instant personalized large language model adaptation via hypernetwork</title>
+		<author>
+			<persName><forename type="first">Zhaoxuan</forename><surname>Tan</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zixuan</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoyang</forename><surname>Wen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheng</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rongzhi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Pei</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fengran</forename><surname>Mo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zheyuan</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingkai</forename><surname>Zeng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qingyu</forename><surname>Yin</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Meng</forename><surname>Jiang</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2510.16282</idno>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b37">
+	<monogr>
+		<title level="m" type="main">Kimi k2: Open agentic intelligence</title>
+		<author>
+			<persName><forename type="first">Kimi</forename><surname>Team</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yifan</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiping</forename><surname>Bao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Y</forename><surname>Charles</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Cheng</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Guanduo</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haiting</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Huarong</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiahao</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ningxin</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruijue</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanru</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuankun</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yutian</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zhuofu</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jialei</forename><surname>Cui</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hao</forename><surname>Ding</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mengnan</forename><surname>Dong</surname></persName>
+		</author>
+		<idno type="arXiv">arXiv:2507.20534</idno>
+		<imprint>
+			<date type="published" when="2026">2026</date>
+			<biblScope unit="page">181</biblScope>
+		</imprint>
+	</monogr>
+	<note type="report_type">Preprint</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b38">
+	<analytic>
+		<title level="a" type="main">Two tales of persona in LLMs: A survey of role-playing and personalization</title>
+		<author>
+			<persName><forename type="first">Yu-Min</forename><surname>Tseng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu-Chao</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Teng-Yun</forename><surname>Hsiao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wei-Lin</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chao-Wei</forename><surname>Huang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Meng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yun-Nung</forename><surname>Chen</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.findings-emnlp.969</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2024</title>
+		<meeting><address><addrLine>Miami, Florida, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="16612" to="16631" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b39">
+	<analytic>
+		<title level="a" type="main">Cue-CoT: Chain-of-thought prompting for responding to in-depth dialogue questions with LLMs</title>
+		<author>
+			<persName><forename type="first">Hongru</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rui</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fei</forename><surname>Mi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Deng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zezhong</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bin</forename><surname>Liang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruifeng</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kam-Fai</forename><surname>Wong</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2023.findings-emnlp.806</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2023</title>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2023">2023</date>
+			<biblScope unit="page" from="12047" to="12064" />
+		</imprint>
+	</monogr>
+	<note>Singapore</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b40">
+	<analytic>
+		<title level="a" type="main">Chain-of-thought prompting elicits reasoning in large language models</title>
+		<author>
+			<persName><forename type="first">Jason</forename><surname>Wei</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuezhi</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dale</forename><surname>Schuurmans</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Maarten</forename><surname>Bosma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fei</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ed</forename><surname>Chi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Denny</forename><surname>Quoc V Le</surname></persName>
+		</author>
+		<author>
+			<persName><surname>Zhou</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Advances in Neural Information Processing Systems</title>
+		<imprint>
+			<publisher>Curran Associates, Inc</publisher>
+			<date type="published" when="2022">2022</date>
+			<biblScope unit="volume">35</biblScope>
+			<biblScope unit="page" from="24824" to="24837" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b41">
+	<analytic>
+		<title level="a" type="main">Longmemeval: Benchmarking chat assistants on long-term interactive memory</title>
+		<author>
+			<persName><forename type="first">Di</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongwei</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Wenhao</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yuwei</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kai-Wei</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dong</forename><surname>Yu</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirteenth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b42">
+	<analytic>
+		<title level="a" type="main">A survey on personalized and pluralistic preference alignment in large language models</title>
+		<author>
+			<persName><forename type="first">Zhouhang</forename><surname>Xie</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junda</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yiran</forename><surname>Shen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Raghav</forename><surname>Jain</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yu</forename><surname>Xia</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xintong</forename><surname>Li</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Aaron</forename><surname>Chang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><forename type="middle">A</forename><surname>Rossi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tong</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sachin</forename><surname>Kumar</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bodhisattwa</forename><surname>Prasad Majumder</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jingbo</forename><surname>Shang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Prithviraj</forename><surname>Ammanabrolu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Julian</forename><surname>Mcauley</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">Second Conference on Language Modeling</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b43">
+	<analytic>
+		<title level="a" type="main">Guided profile generation improves personalization with large language models</title>
+		<author>
+			<persName><forename type="first">Jiarui</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2024.findings-emnlp.231</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Findings of the Association for Computational Linguistics: EMNLP 2024</title>
+		<meeting><address><addrLine>Miami, Florida, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="page" from="4005" to="4016" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b44">
+	<analytic>
+		<title level="a" type="main">2025a. PROPER: A progressive learning framework for personalized large language models with grouplevel adaptation</title>
+		<author>
+			<persName><forename type="first">Linhai</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jialong</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Deyu</forename><surname>Zhou</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yulan</forename><surname>He</surname></persName>
+		</author>
+		<idno type="DOI">10.18653/v1/2025.acl-long.800</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics</title>
+		<meeting>the 63rd Annual Meeting of the Association for Computational Linguistics<address><addrLine>Vienna, Austria</addrLine></address></meeting>
+		<imprint>
+			<publisher>Association for Computational Linguistics</publisher>
+			<biblScope unit="volume">1</biblScope>
+			<biblScope unit="page" from="16399" to="16411" />
+		</imprint>
+	</monogr>
+	<note>Long Papers)</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b45">
+	<analytic>
+		<title level="a" type="main">Personalized lora for humancentered text understanding</title>
+		<author>
+			<persName><forename type="first">You</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jin</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Liang-Chih</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Dan</forename><surname>Xu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xuejie</forename><surname>Zhang</surname></persName>
+		</author>
+		<idno type="DOI">10.1609/aaai.v38i17.29931</idno>
+		<idno>AAAI&apos;24/IAAI&apos;24/EAAI&apos;24</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth Symposium on Educational Advances in Artificial Intelligence</title>
+		<meeting>the Thirty-Eighth AAAI Conference on Artificial Intelligence and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth Symposium on Educational Advances in Artificial Intelligence</meeting>
+		<imprint>
+			<publisher>AAAI Press</publisher>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b46">
+	<analytic>
+		<title level="a" type="main">Amulet: Realignment during test time for personalized preference adaptation of LLMs</title>
+		<author>
+			<persName><forename type="first">Zhaowei</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Fengshuo</forename><surname>Bai</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qizhi</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chengdong</forename><surname>Ma</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingzhi</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haoran</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zilong</forename><surname>Zheng</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yaodong</forename><surname>Yang</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirteenth International Conference on Learning Representations (ICLR)</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b47">
+	<analytic>
+		<title level="a" type="main">Nedim Lipka, and 2 others. 2025c. Personalization of large language models: A survey</title>
+		<author>
+			<persName><forename type="first">Zhehao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ryan</forename><forename type="middle">A</forename><surname>Rossi</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Branislav</forename><surname>Kveton</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yijia</forename><surname>Shao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Diyi</forename><surname>Yang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hamed</forename><surname>Zamani</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Franck</forename><surname>Dernoncourt</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Joe</forename><surname>Barrow</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tong</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Sungchul</forename><surname>Kim</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Ruiyi</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Jiuxiang</forename><surname>Gu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Tyler</forename><surname>Derr</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Hongjie</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Junda</forename><surname>Wu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Xiang</forename><surname>Chen</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Zichao</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Subrata</forename><surname>Mitra</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="j">Transactions on Machine Learning Research</title>
+		<imprint/>
+	</monogr>
+	<note>Survey Certification</note>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b48">
+	<analytic>
+		<title level="a" type="main">Do LLMs recognize your preferences? evaluating personalized preference following in LLMs</title>
+		<author>
+			<persName><forename type="first">Siyan</forename><surname>Zhao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Mingyi</forename><surname>Hong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yang</forename><surname>Liu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Devamanyu</forename><surname>Hazarika</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Kaixiang</forename><surname>Lin</surname></persName>
+		</author>
+	</analytic>
+	<monogr>
+		<title level="m">The Thirteenth International Conference on Learning Representations</title>
+		<imprint>
+			<date type="published" when="2025">2025</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b49">
+	<analytic>
+		<title level="a" type="main">MemoryBank: Enhancing large language models with long-term memory</title>
+		<author>
+			<persName><forename type="first">Wanjun</forename><surname>Zhong</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Lianghong</forename><surname>Guo</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qiqi</forename><surname>Gao</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">He</forename><surname>Ye</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yanlin</forename><surname>Wang</surname></persName>
+		</author>
+		<idno type="DOI">10.1609/aaai.v38i17.29946</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the AAAI Conference on Artificial Intelligence</title>
+		<meeting>the AAAI Conference on Artificial Intelligence</meeting>
+		<imprint>
+			<date type="published" when="2024">2024</date>
+			<biblScope unit="volume">38</biblScope>
+			<biblScope unit="page" from="19724" to="19731" />
+		</imprint>
+	</monogr>
+</biblStruct>
+
+<biblStruct status="extracted" xml:id="b50">
+	<analytic>
+		<title level="a" type="main">HYDRA: Model factorization framework for black-box llm personalization</title>
+		<author>
+			<persName><forename type="first">Yuchen</forename><surname>Zhuang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Haotian</forename><surname>Sun</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Yue</forename><surname>Yu</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Rushi</forename><surname>Qiang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Qifan</forename><surname>Wang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Chao</forename><surname>Zhang</surname></persName>
+		</author>
+		<author>
+			<persName><forename type="first">Bo</forename><surname>Dai</surname></persName>
+		</author>
+		<idno type="DOI">10.52202/079017-3196</idno>
+	</analytic>
+	<monogr>
+		<title level="m">Proceedings of the 38th International Conference on Neural Information Processing Systems, NIPS &apos;24</title>
+		<meeting>the 38th International Conference on Neural Information Processing Systems, NIPS &apos;24<address><addrLine>Red Hook, NY, USA</addrLine></address></meeting>
+		<imprint>
+			<publisher>Curran Associates Inc</publisher>
+			<date type="published" when="2024">2024</date>
+		</imprint>
+	</monogr>
+</biblStruct>
+
+				</listBibl>
+			</div>
+		</back>
+	</text>
+</TEI>

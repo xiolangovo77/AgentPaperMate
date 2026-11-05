@@ -31,12 +31,12 @@ public class LoginUserVO {
     private String avatarUrl;
 
     /**
-     * 创建时间，使用 UTC。
+     * 创建时间，使用上海时间。
      */
     private LocalDateTime createTime;
 
     /**
-     * 更新时间，使用 UTC。
+     * 更新时间，使用上海时间。
      */
     private LocalDateTime updateTime;
 }

@@ -36,7 +36,7 @@
     <select id="selectDueForUpdate" resultMap="BaseResultMap">
         SELECT j.* FROM paper_processing_job j
         WHERE j.status = 'pending' AND j.is_delete = 0
-          AND j.next_retry_time &lt;= UTC_TIMESTAMP(3)
+          AND j.next_retry_time &lt;= CURRENT_TIMESTAMP(3)
           AND EXISTS (SELECT 1 FROM paper p WHERE p.id = j.paper_id AND p.is_delete = 0)
         ORDER BY j.next_retry_time, j.id
         LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -46,16 +46,16 @@
     <update id="claim">
         UPDATE paper_processing_job
         SET status = 'running', lease_token = #{token},
-            lease_until = TIMESTAMPADD(SECOND, #{leaseSeconds}, UTC_TIMESTAMP(3)),
-            start_time = UTC_TIMESTAMP(3), end_time = NULL, update_time = UTC_TIMESTAMP(3)
+            lease_until = TIMESTAMPADD(SECOND, #{leaseSeconds}, CURRENT_TIMESTAMP(3)),
+            start_time = CURRENT_TIMESTAMP(3), end_time = NULL, update_time = CURRENT_TIMESTAMP(3)
         WHERE id = #{id} AND status = 'pending' AND is_delete = 0
-          AND next_retry_time &lt;= UTC_TIMESTAMP(3)
+          AND next_retry_time &lt;= CURRENT_TIMESTAMP(3)
     </update>
 
     <!-- 在事务中批量锁定租约过期的运行中任务，按过期时间排序并跳过其他实例已锁定的行。 -->
     <select id="selectExpiredForUpdate" resultMap="BaseResultMap">
         SELECT * FROM paper_processing_job
-        WHERE status = 'running' AND is_delete = 0 AND lease_until &lt;= UTC_TIMESTAMP(3)
+        WHERE status = 'running' AND is_delete = 0 AND lease_until &lt;= CURRENT_TIMESTAMP(3)
         ORDER BY lease_until, id
         LIMIT #{limit} FOR UPDATE SKIP LOCKED
     </select>
@@ -64,35 +64,35 @@
     <update id="retryOrFail">
         UPDATE paper_processing_job
         SET status = IF(retry_count &lt; max_retries, 'pending', 'failed'),
-            end_time = IF(retry_count &lt; max_retries, NULL, UTC_TIMESTAMP(3)),
-            next_retry_time = TIMESTAMPADD(SECOND, #{delaySeconds}, UTC_TIMESTAMP(3)),
+            end_time = IF(retry_count &lt; max_retries, NULL, CURRENT_TIMESTAMP(3)),
+            next_retry_time = TIMESTAMPADD(SECOND, #{delaySeconds}, CURRENT_TIMESTAMP(3)),
             error_code = #{errorCode}, error_message = #{errorCode},
-            lease_token = NULL, lease_until = NULL, update_time = UTC_TIMESTAMP(3),
+            lease_token = NULL, lease_until = NULL, update_time = CURRENT_TIMESTAMP(3),
             retry_count = IF(retry_count &lt; max_retries, retry_count + 1, retry_count)
         WHERE id = #{id} AND lease_token = #{token} AND status = 'running' AND is_delete = 0
         <!-- 回收过期任务时要求租约已过期；主动报告失败时要求租约仍然有效。 -->
         <choose>
-            <when test="expired">AND lease_until &lt;= UTC_TIMESTAMP(3)</when>
-            <otherwise>AND lease_until &gt; UTC_TIMESTAMP(3)</otherwise>
+            <when test="expired">AND lease_until &lt;= CURRENT_TIMESTAMP(3)</when>
+            <otherwise>AND lease_until &gt; CURRENT_TIMESTAMP(3)</otherwise>
         </choose>
     </update>
     <!-- 仅为租约有效、未超过最大执行时长且论文未删除的任务续租。 -->
     <update id="renew">
         UPDATE paper_processing_job j
-        SET lease_until = TIMESTAMPADD(SECOND, #{leaseSeconds}, UTC_TIMESTAMP(3)), update_time = UTC_TIMESTAMP(3)
+        SET lease_until = TIMESTAMPADD(SECOND, #{leaseSeconds}, CURRENT_TIMESTAMP(3)), update_time = CURRENT_TIMESTAMP(3)
         WHERE id = #{job.id} AND lease_token = #{job.leaseToken} AND status = 'running' AND is_delete = 0
-          AND lease_until &gt; UTC_TIMESTAMP(3)
-          AND TIMESTAMPADD(SECOND, #{maxSeconds}, start_time) &gt; UTC_TIMESTAMP(3)
+          AND lease_until &gt; CURRENT_TIMESTAMP(3)
+          AND TIMESTAMPADD(SECOND, #{maxSeconds}, start_time) &gt; CURRENT_TIMESTAMP(3)
           AND EXISTS (SELECT 1 FROM paper p WHERE p.id = j.paper_id AND p.is_delete = 0)
     </update>
     <!-- 更新任务步骤与分块数量；论文尚无可用索引时同步设置为处理中，保留已有索引的论文状态。 -->
     <update id="progress">
         UPDATE paper_processing_job j JOIN paper p ON p.id = j.paper_id
         SET j.current_step = #{step}, j.total_chunks = #{total}, j.indexed_chunks = #{indexed},
-            j.update_time = UTC_TIMESTAMP(3),
-            p.status = IF(p.active_index_version IS NULL, 'processing', p.status), p.update_time = UTC_TIMESTAMP(3)
+            j.update_time = CURRENT_TIMESTAMP(3),
+            p.status = IF(p.active_index_version IS NULL, 'processing', p.status), p.update_time = CURRENT_TIMESTAMP(3)
         WHERE j.id = #{job.id} AND j.lease_token = #{job.leaseToken} AND j.status = 'running'
-          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; UTC_TIMESTAMP(3)
+          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; CURRENT_TIMESTAMP(3)
     </update>
     <!-- 解析成功即保存元数据，后续向量化失败不会撤销；不提前标记 ready。 -->
     <update id="updateParsedMetadata">
@@ -100,29 +100,29 @@
         SET p.title = IF(#{parsed.title} = '', p.title, LEFT(#{parsed.title}, 500)),
             p.authors = IF(#{parsed.authors} = '' OR NOT #{parsed.authorsTrusted}, p.authors, LEFT(#{parsed.authors}, 1000)),
             p.abstract_text = IF(#{parsed.abstractText} = '', p.abstract_text, #{parsed.abstractText}),
-            p.page_count = COALESCE(#{parsed.pageCount}, p.page_count), p.update_time = UTC_TIMESTAMP(3),
-            j.current_step = 'chunking', j.update_time = UTC_TIMESTAMP(3)
+            p.page_count = COALESCE(#{parsed.pageCount}, p.page_count), p.update_time = CURRENT_TIMESTAMP(3),
+            j.current_step = 'chunking', j.update_time = CURRENT_TIMESTAMP(3)
         WHERE j.id = #{job.id} AND j.lease_token = #{job.leaseToken} AND j.status = 'running'
-          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; UTC_TIMESTAMP(3)
+          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; CURRENT_TIMESTAMP(3)
           AND (p.active_index_version IS NULL OR p.active_index_version &lt;= j.index_version)
     </update>
     <!-- 原子发布完成状态和尝试令牌，禁止旧版本覆盖新版本。 -->
     <update id="complete">
         UPDATE paper_processing_job j JOIN paper p ON p.id = j.paper_id
         SET j.status = 'completed', j.current_step = 'done', j.total_chunks = #{total}, j.indexed_chunks = #{total},
-            j.end_time = UTC_TIMESTAMP(3), j.update_time = UTC_TIMESTAMP(3), j.lease_token = NULL, j.lease_until = NULL,
+            j.end_time = CURRENT_TIMESTAMP(3), j.update_time = CURRENT_TIMESTAMP(3), j.lease_token = NULL, j.lease_until = NULL,
             j.error_code = NULL, j.error_message = NULL,
             p.status = 'ready', p.active_index_version = j.index_version, p.active_index_attempt = #{job.leaseToken},
-            p.update_time = UTC_TIMESTAMP(3)
+            p.update_time = CURRENT_TIMESTAMP(3)
         WHERE j.id = #{job.id} AND j.lease_token = #{job.leaseToken} AND j.status = 'running'
-          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; UTC_TIMESTAMP(3)
-          AND TIMESTAMPADD(SECOND, #{maxSeconds}, j.start_time) &gt; UTC_TIMESTAMP(3)
+          AND j.is_delete = 0 AND p.is_delete = 0 AND j.lease_until &gt; CURRENT_TIMESTAMP(3)
+          AND TIMESTAMPADD(SECOND, #{maxSeconds}, j.start_time) &gt; CURRENT_TIMESTAMP(3)
           AND (p.active_index_version IS NULL OR p.active_index_version &lt;= j.index_version)
     </update>
     <!-- 根据任务 ID 同步论文失败状态，仅在任务失败、论文无可用索引且没有更新版本任务时生效。 -->
     <update id="markPaperFailed">
         UPDATE paper p JOIN paper_processing_job j ON p.id = j.paper_id
-        SET p.status = 'failed', p.update_time = UTC_TIMESTAMP(3)
+        SET p.status = 'failed', p.update_time = CURRENT_TIMESTAMP(3)
         WHERE j.id = #{id} AND j.status = 'failed' AND j.is_delete = 0 AND p.is_delete = 0
           AND p.active_index_version IS NULL
           AND NOT EXISTS (SELECT 1 FROM paper_processing_job newer

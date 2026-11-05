@@ -18,8 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.Locale;
 
 import static com.ecnu.agentpapermate.constant.UserConstant.USER_LOGIN_STATE;
@@ -54,11 +52,8 @@ public class AppUserServiceImpl extends ServiceImpl<AppUserMapper, AppUser> impl
         user.setUsername(normalizedUsername);
         user.setPasswordHash(passwordEncoder.encode(password));
 
-        // 4、设置默认昵称和创建、更新时间
+        // 4、设置默认昵称，时间字段取数据库默认值
         user.setNickname("无名");
-        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
-        user.setCreateTime(now);
-        user.setUpdateTime(now);
 
         // 5、保存用户，处理并发注册导致的账号重复
         try {
@@ -117,7 +112,6 @@ public class AppUserServiceImpl extends ServiceImpl<AppUserMapper, AppUser> impl
 
         // 3、构建允许更新的用户信息，ID 始终取自当前登录用户
         AppUser changes = new AppUser();
-        changes.setId(loginUser.getId());
         changes.setNickname(nickname);
         changes.setAvatarUrl(avatarUrl);
 
@@ -126,8 +120,10 @@ public class AppUserServiceImpl extends ServiceImpl<AppUserMapper, AppUser> impl
             changes.setPasswordHash(passwordEncoder.encode(password));
         }
         // 5、设置更新时间并保存修改
-        changes.setUpdateTime(LocalDateTime.now(ZoneOffset.UTC));
-        ThrowUtils.throwIf(!updateById(changes), ErrorCode.OPERATION_ERROR, "用户信息更新失败");
+        boolean updated = update(changes, Wrappers.<AppUser>lambdaUpdate()
+                .eq(AppUser::getId, loginUser.getId())
+                .setSql("update_time = CURRENT_TIMESTAMP(3)"));
+        ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "用户信息更新失败");
 
         // 6、返回更新结果
         // Session 只存 ID，后续获取用户信息时读取数据库中的最新值。

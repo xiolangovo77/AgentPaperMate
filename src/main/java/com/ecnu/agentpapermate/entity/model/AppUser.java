@@ -66,13 +66,13 @@ public class AppUser implements Serializable {
     private String status;
 
     /**
-     * 创建时间，使用 UTC。
+     * 创建时间，使用上海时间。
      */
     @TableField("create_time")
     private LocalDateTime createTime;
 
     /**
-     * 更新时间，使用 UTC。
+     * 更新时间，使用上海时间。
      */
     @TableField("update_time")
     private LocalDateTime updateTime;

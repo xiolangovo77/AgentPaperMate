@@ -125,7 +125,7 @@ public class PaperProcessingJob implements Serializable {
     private Integer maxRetries;
 
     /**
-     * 允许首次执行或重试的时间UTC
+     * 允许首次执行或重试的时间（上海时间）
      */
     @TableField("next_retry_time")
     private LocalDateTime nextRetryTime;
@@ -137,19 +137,19 @@ public class PaperProcessingJob implements Serializable {
     private String leaseToken;
 
     /**
-     * 执行者租约到期时间UTC，执行期间续约
+     * 执行者租约到期时间（上海时间），执行期间续约
      */
     @TableField("lease_until")
     private LocalDateTime leaseUntil;
 
     /**
-     * 最近一次开始执行时间UTC
+     * 最近一次开始执行时间（上海时间）
      */
     @TableField("start_time")
     private LocalDateTime startTime;
 
     /**
-     * 完成或最终失败时间UTC
+     * 完成或最终失败时间（上海时间）
      */
     @TableField("end_time")
     private LocalDateTime endTime;
@@ -167,13 +167,13 @@ public class PaperProcessingJob implements Serializable {
     private String errorMessage;
 
     /**
-     * 任务创建时间UTC
+     * 任务创建时间（上海时间）
      */
     @TableField("create_time")
     private LocalDateTime createTime;
 
     /**
-     * 任务更新时间UTC
+     * 任务更新时间（上海时间）
      */
     @TableField("update_time")
     private LocalDateTime updateTime;

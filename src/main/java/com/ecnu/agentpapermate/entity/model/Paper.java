@@ -113,13 +113,13 @@ public class Paper implements Serializable {
     private String activeIndexAttempt;
 
     /**
-     * 创建时间UTC
+     * 创建时间（上海时间）
      */
     @TableField("create_time")
     private LocalDateTime createTime;
 
     /**
-     * 更新时间UTC
+     * 更新时间（上海时间）
      */
     @TableField("update_time")
     private LocalDateTime updateTime;

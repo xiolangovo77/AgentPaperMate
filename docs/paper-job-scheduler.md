@@ -17,7 +17,9 @@
 | lease-seconds | 120 | 领取租约有效秒数 |
 | retry-delay-seconds | 30 | 异常及租约过期后的固定重试延迟 |
 
-时间以数据库 UTC 为准，连接时区统一为 UTC。`retry_count` 表示已经安排的额外重试次数，`max_retries=3` 最多允许首次加三次重试。日志级别设为 `logging.level.com.ecnu.agentpapermate.scheduler=DEBUG` 可查看领取记录。
+时间字段取 MySQL 会话的上海时间（+08:00）。任务领取、租约和重试均使用 `CURRENT_TIMESTAMP(3)`。`retry_count` 表示已经安排的额外重试次数，`max_retries=3` 最多允许首次加三次重试。日志级别设为 `logging.level.com.ecnu.agentpapermate.scheduler=DEBUG` 可查看领取记录。
+
+从旧版切换时，先暂停上传并让旧任务完成，再切换所有后端实例。若仍有待重试或运行中的任务，请先核对其 `next_retry_time`、`start_time`、`lease_until` 的时区，否则旧 UTC 值可能被新调度器提前判为到期。历史 `DATETIME` 不含时区标记，只对确认按 UTC 写入的值加 8 小时。
 
 ## 验证
 

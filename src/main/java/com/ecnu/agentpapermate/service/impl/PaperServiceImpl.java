@@ -21,8 +21,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
 import java.util.Map;
 
 /**
@@ -89,8 +87,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 if (existing != null) {
                     return existing;
                 }
-                // 4、使用可信文件信息创建论文，时间统一保存 UTC
-                LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+                // 4、使用可信文件信息创建论文，时间字段取数据库默认值
                 Paper paper = new Paper();
                 paper.setUserId(userId);
                 paper.setTitle(file.getOriginalFilename());
@@ -101,13 +98,11 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 paper.setFileSize(file.getFileSize());
                 paper.setFileUrl(request.getFileUrl());
                 paper.setStatus("uploaded");
-                paper.setCreateTime(now);
-                paper.setUpdateTime(now);
                 paper.setIsDelete((byte) 0);
                 requireInserted(paperMapper.insert(paper));
 
                 // 5、创建待执行任务，任一步失败都回滚
-                PaperProcessingJob job = buildJob(paper.getId(), now);
+                PaperProcessingJob job = buildJob(paper.getId());
                 requireInserted(jobMapper.insert(job));
                 return buildPaperAddVO(paper, job);
             });
@@ -154,7 +149,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     /**
      * 构建首次处理任务，保存当前处理配置，初始状态为 pending、步骤为 queued。
      */
-    private PaperProcessingJob buildJob(Long paperId, LocalDateTime now) {
+    private PaperProcessingJob buildJob(Long paperId) {
         PaperProcessingJob job = new PaperProcessingJob();
         job.setPaperId(paperId);
         job.setIndexVersion(1);
@@ -172,9 +167,6 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         job.setIndexedChunks(0);
         job.setRetryCount(0);
         job.setMaxRetries(processingProperties.getMaxRetries());
-        job.setNextRetryTime(now);
-        job.setCreateTime(now);
-        job.setUpdateTime(now);
         job.setIsDelete((byte) 0);
         return job;
     }

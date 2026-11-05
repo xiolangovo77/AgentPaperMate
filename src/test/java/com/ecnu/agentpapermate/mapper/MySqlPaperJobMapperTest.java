@@ -28,7 +28,7 @@ class MySqlPaperJobMapperTest {
     void setUp() throws Exception {
         connection = DriverManager.getConnection(System.getenv("PAPER_JOB_TEST_JDBC_URL"),
                 System.getenv("PAPER_JOB_TEST_USERNAME"), System.getenv("PAPER_JOB_TEST_PASSWORD"));
-        execute("SET time_zone = '+00:00'");
+        execute("SET time_zone = '+08:00'");
         String ddl = Files.readString(Path.of("sql/create_table.sql"));
         for (String table : new String[]{"paper", "paper_processing_job"}) {
             var match = Pattern.compile("CREATE TABLE " + table + " \\([\\s\\S]*?;").matcher(ddl);
@@ -57,9 +57,9 @@ class MySqlPaperJobMapperTest {
 
     @Test
     void claimUsesDueTimeAndExcludesDeletedPapers() throws Exception {
-        execute("UPDATE paper_processing_job SET next_retry_time = TIMESTAMPADD(HOUR,1,UTC_TIMESTAMP(3))");
+        execute("UPDATE paper_processing_job SET next_retry_time = TIMESTAMPADD(HOUR,1,CURRENT_TIMESTAMP(3))");
         assertNull(mapper.selectDueForUpdate());
-        execute("UPDATE paper_processing_job SET next_retry_time = TIMESTAMPADD(HOUR,-1,UTC_TIMESTAMP(3))");
+        execute("UPDATE paper_processing_job SET next_retry_time = TIMESTAMPADD(HOUR,-1,CURRENT_TIMESTAMP(3))");
         execute("UPDATE paper SET is_delete = 1");
         assertNull(mapper.selectDueForUpdate());
         execute("UPDATE paper SET is_delete = 0");
@@ -105,14 +105,14 @@ class MySqlPaperJobMapperTest {
     @Test
     void expiredLeaseRejectsOldWorkerAndRecoveryConsumesBudget() throws Exception {
         mapper.claim(1L, "lease-a", 120);
-        execute("UPDATE paper_processing_job SET lease_until = TIMESTAMPADD(SECOND,-1,UTC_TIMESTAMP(3))");
+        execute("UPDATE paper_processing_job SET lease_until = TIMESTAMPADD(SECOND,-1,CURRENT_TIMESTAMP(3))");
         assertEquals(0, mapper.progress(claimed("lease-a"), "parsing", 0, 0));
         assertEquals(0, mapper.retryOrFail(1L, "lease-a", false, 30, "EXECUTION_FAILED"));
         assertEquals(1, mapper.selectExpiredForUpdate(16).size());
         assertEquals(1, mapper.retryOrFail(1L, "lease-a", true, 30, "LEASE_EXPIRED"));
         assertEquals("1", field("retry_count"));
         assertEquals("pending", field("status"));
-        execute("UPDATE paper_processing_job SET next_retry_time = UTC_TIMESTAMP(3)");
+        execute("UPDATE paper_processing_job SET next_retry_time = CURRENT_TIMESTAMP(3)");
         assertEquals(1, mapper.claim(1L, "lease-b", 120));
         assertEquals(0, mapper.progress(claimed("lease-a"), "parsing", 0, 0));
         assertEquals(0, mapper.retryOrFail(1L, "lease-b", true, 30, "LEASE_EXPIRED"));
@@ -126,7 +126,7 @@ class MySqlPaperJobMapperTest {
         assertEquals("pending", field("status"));
         assertEquals("1", field("retry_count"));
         assertNull(field("end_time"));
-        execute("UPDATE paper_processing_job SET next_retry_time = UTC_TIMESTAMP(3)");
+        execute("UPDATE paper_processing_job SET next_retry_time = CURRENT_TIMESTAMP(3)");
         mapper.claim(1L, "lease-b", 120);
         mapper.retryOrFail(1L, "lease-b", false, 30, "EXECUTION_FAILED");
         assertEquals("failed", field("status"));

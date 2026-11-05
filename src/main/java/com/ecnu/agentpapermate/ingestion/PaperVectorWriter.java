@@ -61,10 +61,12 @@ public class PaperVectorWriter {
      * 按配置创建缺失索引，并校验维度、模型版本及尝试隔离和来源追踪字段
      */
     public void ensureIndex(PaperProcessingJob job) {
+        // 1、按任务中的索引名称检查索引是否存在
         String path = indexPath(job);
         try {
             // 低级 REST 客户端对 HEAD 404 返回响应，不抛 ResponseException。
             if (client.performRequest(new Request("HEAD", path)).getStatusLine().getStatusCode() == 404) {
+                // 2、索引缺失时检查建索引开关，按任务的向量维度和模型版本填充模板
                 if (!properties.isInitializeSchema()) {
                     throw new IllegalStateException("ES 索引不存在且 initialize-schema=false");
                 }
@@ -76,6 +78,7 @@ public class PaperVectorWriter {
                     try {
                         request("PUT", path, mapping);
                     } catch (ResponseException race) {
+                        // 其他任务抢先建好同名索引时，继续校验实际映射
                         if (race.getResponse().getStatusLine().getStatusCode() != 400
                                 || !new String(race.getResponse().getEntity().getContent().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
                                 .contains("resource_already_exists_exception")) {
@@ -84,6 +87,7 @@ public class PaperVectorWriter {
                     }
                 }
             }
+            // 3、读取实际映射，核对向量配置、执行令牌和来源字段
             JsonNode mapping = request("GET", path + "/_mapping", null).path(job.getEsIndexName()).path("mappings");
             if (mapping.at("/properties/embedding/dims").asInt() != job.getEmbeddingDimension()
                     || !properties.getSimilarity().name().equals(mapping.at("/properties/embedding/similarity").asText())
@@ -102,9 +106,11 @@ public class PaperVectorWriter {
      * 将一批论文文档向量化并写入任务指定的索引
      */
     public void write(PaperProcessingJob job, List<Document> documents) {
+        // 1、使用任务快照指定的索引名称和向量维度
         var options = new ElasticsearchVectorStoreOptions();
         options.setIndexName(job.getEsIndexName());
         options.setDimensions(job.getEmbeddingDimension());
+        // 2、将本批文档向量化，写入已校验的索引
         ElasticsearchVectorStore.builder(client, embedding).options(options).initializeSchema(false).build().add(documents);
     }
 
@@ -113,13 +119,16 @@ public class PaperVectorWriter {
      */
     public void verify(PaperProcessingJob job, int expected) {
         try {
+            // 1、刷新索引使新分块可检索，并检查是否有分片刷新失败
             JsonNode refresh = request("POST", indexPath(job) + "/_refresh", null);
             if (refresh.at("/_shards/failed").asInt() != 0) {
                 throw new IllegalStateException("ES 刷新失败");
             }
+            // 2、按论文 ID、索引版本和租约令牌限定本次写入的分块
             var filters = List.of(Map.of("term", Map.of("metadata.paperId", job.getPaperId().toString())),
                     Map.of("term", Map.of("metadata.indexVersion", job.getIndexVersion())),
                     Map.of("term", Map.of("metadata.attemptToken", job.getLeaseToken())));
+            // 3、统计匹配分块，确认分片查询成功且数量符合预期
             JsonNode count = request("POST", indexPath(job) + "/_count", Map.of("query", Map.of("bool", Map.of("filter", filters))));
             if (count.path("count").asInt(-1) != expected || count.at("/_shards/failed").asInt() != 0) {
                 throw new IllegalStateException("ES 可检索分块数量与预期不一致");
@@ -143,10 +152,12 @@ public class PaperVectorWriter {
      * 发送可选 JSON 请求体的 Elasticsearch 请求，并读取 JSON 响应
      */
     private JsonNode request(String method, String path, Object body) throws IOException {
+        // 1、构造索引请求，有请求体时序列化为 JSON
         Request request = new Request(method, path);
         if (body != null) {
             request.setJsonEntity(json.writeValueAsString(body));
         }
+        // 2、发送请求并读取 JSON 响应，读取完毕后关闭响应流
         try (var input = client.performRequest(request).getEntity().getContent()) {
             return json.readTree(input);
         }

@@ -64,9 +64,11 @@ public class PaperJobProcessor {
                              GrobidClient grobid, PaperChunker chunker, PaperVectorWriter vectors,
                              PaperJobClaimService jobs,
                              @Qualifier("paperLeaseHeartbeatExecutor") ScheduledExecutorService heartbeat) {
+        // 1、检查租约时长是否给心跳续期留足时间
         if (properties.getHeartbeatSeconds() * 2 >= scheduler.getLeaseSeconds()) {
             throw new IllegalArgumentException("租约时长必须大于心跳间隔的两倍");
         }
+        // 2、启用入库时校验解析器和向量模型的版本配置
         if (properties.isEnabled() && (processing.getParserVersion().contains("unconfigured")
                 || processing.getEmbeddingModel().startsWith("placeholder")
                 || processing.getEmbeddingVersion().startsWith("placeholder"))) {
@@ -92,25 +94,31 @@ public class PaperJobProcessor {
      * 在租约保护下执行完整入库流程，确认分块可检索后提交完成状态，并最终清理临时 PDF
      */
     public void process(PaperProcessingJob job) {
+        // 1、检查入库开关，核对任务快照与当前执行器的配置
         if (!isEnabled()) throw new IllegalStateException("论文入库未启用");
         requireCompatible(job);
         Path pdf = null;
+        // 2、启动租约心跳，读取本次任务的论文记录
         try (var lease = new PaperLease(job, jobs, properties, heartbeat)) {
             var paper = papers.selectById(job.getPaperId());
             if (paper == null) throw new IllegalStateException("论文不存在或已删除");
+            // 3、下载原始 PDF 到临时文件，用上传时保存的哈希校验内容
             jobs.progress(job, "parsing", 0, 0);
             pdf = Files.createTempFile("paper-" + job.getId() + "-", ".pdf");
             var file = cos.downloadPaper(paper.getFileUrl(), paper.getUserId(), pdf);
             if (!Objects.equals(file.getFileHash(), paper.getFileHash())) throw new IllegalStateException("原始 PDF 内容发生变化");
+            // 4、在解析前后检查租约，再保存 GROBID 提取的元数据
             lease.check();
             var parsed = grobid.parse(pdf);
             lease.check();
             jobs.updateParsedMetadata(job, parsed);
             if (!parsed.title().isBlank()) paper.setTitle(parsed.title());
+            // 5、按论文结构分块，并确认目标索引与任务配置兼容
             jobs.progress(job, "chunking", 0, 0);
             var documents = chunker.split(parsed, paper, job);
             lease.check();
             vectors.ensureIndex(job);
+            // 6、分批写入向量，每批写入前后检查租约并记录进度
             for (int start = 0; start < documents.size(); start += properties.getEmbeddingBatchSize()) {
                 lease.check();
                 int end = Math.min(start + properties.getEmbeddingBatchSize(), documents.size());
@@ -119,6 +127,7 @@ public class PaperJobProcessor {
                 lease.check();
                 jobs.progress(job, "indexing", documents.size(), end);
             }
+            // 7、核对本次写入的分块数量，再凭有效租约提交完成状态
             jobs.progress(job, "verifying", documents.size(), documents.size());
             lease.check();
             vectors.verify(job, documents.size());
@@ -127,6 +136,7 @@ public class PaperJobProcessor {
         } catch (java.io.IOException e) {
             throw new IllegalStateException("论文临时文件操作失败", e);
         } finally {
+            // 8、清理临时 PDF，删除失败时登记为进程退出时清理
             if (pdf != null) {
                 try { Files.deleteIfExists(pdf); }
                 catch (java.io.IOException ignored) { pdf.toFile().deleteOnExit(); }

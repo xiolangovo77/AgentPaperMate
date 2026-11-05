@@ -5,20 +5,14 @@ import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties
 import com.alibaba.cloud.ai.dashscope.api.DashScopeApi;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingModel;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
-import org.apache.http.HttpHost;
-import org.apache.http.auth.AuthScope;
-import org.apache.http.auth.UsernamePasswordCredentials;
-import org.apache.http.impl.client.BasicCredentialsProvider;
-import org.elasticsearch.client.RestClient;
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.ai.retry.RetryUtils;
-import org.springframework.ai.autoconfigure.vectorstore.elasticsearch.ElasticsearchVectorStoreProperties;
-import org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.util.StringUtils;
@@ -28,11 +22,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
 /**
- * 配置论文入库使用的向量模型、Elasticsearch 客户端和租约心跳线程池
+ * 配置论文入库使用的向量模型和租约心跳线程池，并引入论文索引的连接配置。
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({DashScopeConnectionProperties.class, DashScopeEmbeddingProperties.class,
-        ElasticsearchProperties.class, ElasticsearchVectorStoreProperties.class})
+@Import(PaperElasticsearchConfiguration.class)
+@EnableConfigurationProperties({DashScopeConnectionProperties.class, DashScopeEmbeddingProperties.class})
 public class PaperIngestionConfiguration {
     /**
      * 创建文档向量模型，校验启用时的服务配置，并由任务层负责失败重试
@@ -41,10 +35,13 @@ public class PaperIngestionConfiguration {
     public DashScopeEmbeddingModel paperEmbeddingModel(
             PaperIngestionProperties ingestionProperties, PaperProcessingProperties processingProperties,
             DashScopeConnectionProperties connection, DashScopeEmbeddingProperties embedding) {
+        // 1、优先读取向量模型专用的连接配置，缺省项使用 DashScope 公共配置
         String baseUrl = StringUtils.hasText(embedding.getBaseUrl()) ? embedding.getBaseUrl() : connection.getBaseUrl();
         String apiKey = StringUtils.hasText(embedding.getApiKey()) ? embedding.getApiKey() : connection.getApiKey();
         String workspaceId = StringUtils.hasText(embedding.getWorkspaceId())
                 ? embedding.getWorkspaceId() : connection.getWorkspaceId();
+
+        // 2、校验文档向量模式，启用入库时再校验服务地址和密钥
         if (!"document".equals(embedding.getOptions().getTextType())) {
             throw new IllegalArgumentException("论文入库的 DashScope text-type 必须为 document");
         }
@@ -53,12 +50,16 @@ public class PaperIngestionConfiguration {
                 || apiKey.startsWith("placeholder"))) {
             throw new IllegalArgumentException("开启入库前请替换 DashScope 占位地址及密钥");
         }
+
+        // 3、配置连接和读取超时，创建调用 DashScope 的 API 客户端
         var factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(ingestionProperties.getConnectTimeoutSeconds()));
         factory.setReadTimeout(Duration.ofSeconds(ingestionProperties.getRequestTimeoutSeconds()));
         var api = new DashScopeApi(baseUrl, apiKey, workspaceId,
                 org.springframework.web.client.RestClient.builder().requestFactory(factory),
                 org.springframework.web.reactive.function.client.WebClient.builder(), RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER);
+
+        // 4、创建文档向量模型，每个请求只尝试一次，失败重试交给入库任务
         return new DashScopeEmbeddingModel(api, MetadataMode.NONE,
                 DashScopeEmbeddingOptions.builder().withModel(embedding.getOptions().getModel())
                         .withTextType(embedding.getOptions().getTextType()).build(),
@@ -68,8 +69,10 @@ public class PaperIngestionConfiguration {
              */
             @Override
             public EmbeddingResponse call(EmbeddingRequest request) {
+                // 1、调用 DashScope 获取当前批次的文档向量
                 var response = super.call(request);
-                // M6.1 不发送 dimension 参数，校验服务端默认维度后才能写入 ES。
+
+                // 2、M6.1 使用服务端默认维度，写入索引前校验向量数量和维度
                 if (response.getResults().size() != request.getInstructions().size()
                         || response.getResults().stream().anyMatch(result ->
                         result.getOutput().length != processingProperties.getEmbeddingDimension())) {
@@ -78,23 +81,6 @@ public class PaperIngestionConfiguration {
                 return response;
             }
         };
-    }
-
-    /**
-     * 创建论文索引专用的 Elasticsearch 客户端，配置认证、请求超时及关闭时的资源释放
-     */
-    @Bean(destroyMethod = "close")
-    public RestClient paperElasticsearchClient(PaperIngestionProperties ingestionProperties, ElasticsearchProperties elasticsearch) {
-        var credentials = new BasicCredentialsProvider();
-        if (StringUtils.hasText(elasticsearch.getUsername())) {
-            credentials.setCredentials(AuthScope.ANY, new UsernamePasswordCredentials(
-                    elasticsearch.getUsername(), elasticsearch.getPassword()));
-        }
-        return RestClient.builder(elasticsearch.getUris().stream().map(HttpHost::create).toArray(HttpHost[]::new))
-                .setRequestConfigCallback(c -> c.setConnectTimeout(ingestionProperties.getConnectTimeoutSeconds() * 1000)
-                        .setSocketTimeout(ingestionProperties.getRequestTimeoutSeconds() * 1000)
-                        .setConnectionRequestTimeout(ingestionProperties.getConnectTimeoutSeconds() * 1000))
-                .setHttpClientConfigCallback(c -> c.setDefaultCredentialsProvider(credentials)).build();
     }
 
     /**

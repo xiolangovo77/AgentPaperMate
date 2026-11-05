@@ -38,6 +38,7 @@ public class PaperChunker {
      */
     public List<Document> split(ParsedPaper parsed, Paper paper, PaperProcessingJob job) {
         try {
+            // 1、从任务快照读取目标长度、长度上限和重叠预算，并校验取值
             var config = json.readTree(job.getChunkingConfig());
             int target = config.path("chunkSize").asInt();
             int maximum = config.path("maxChunkSize").asInt(target);
@@ -46,6 +47,7 @@ public class PaperChunker {
                     || overlap < 0 || overlap >= target - 4) {
                 throw new IllegalArgumentException("无效的结构分块配置");
             }
+            // 2、按章节和内容类型分组，正文与公式可放在同一组
             List<Document> result = new ArrayList<>();
             List<ParsedPaper.Paragraph> group = new ArrayList<>();
             String previousKey = null;
@@ -62,6 +64,7 @@ public class PaperChunker {
                 group.add(block);
                 previousKey = key;
             }
+            // 3、处理最后一组，确认论文至少生成一个可索引分块
             pack(group, parsed, paper, job, target, maximum, overlap, result);
             if (result.isEmpty()) {
                 throw new IllegalArgumentException("论文没有可索引内容");
@@ -77,6 +80,7 @@ public class PaperChunker {
      */
     private void pack(List<ParsedPaper.Paragraph> group, ParsedPaper parsed, Paper paper, PaperProcessingJob job,
                       int target, int maximum, int overlap, List<Document> result) {
+        // 1、跳过空组，为标题和章节名预留空间后计算正文预算
         if (group.isEmpty()) {
             return;
         }
@@ -85,16 +89,19 @@ public class PaperChunker {
         int budget = maximum - encoding.countTokens(prefix) - 4;
         int desired = Math.max(8, target - encoding.countTokens(prefix) - 4);
         List<Piece> buffer = new ArrayList<>();
+        // 2、按句子读取同组内容，将超长句或表格行拆成可容纳的片段
         for (var block : group) {
             for (String sentence : sentences(block)) {
                 List<String> fragments = splitBlock(sentence, block.kind(), budget);
                 for (String fragment : fragments) {
                     Piece next = new Piece(fragment, block, fragments.size() == 1);
+                    // 3、追加后会超出上限时立即换块；仅达到目标长度时，优先让公式与相邻文本同块
                     boolean formulaBoundary = block.kind().equals("formula")
                             || (!buffer.isEmpty() && buffer.getLast().block().kind().equals("formula"));
                     if (!buffer.isEmpty() && (tokens(buffer, next) > budget
                             || (tokens(buffer, null) >= desired && !formulaBoundary))) {
                         emit(buffer, prefix, paper, job, result, maximum);
+                        // 4、按重叠预算保留块尾的完整正文句，为下一个片段留出空间
                         List<Piece> carry = new ArrayList<>();
                         // 只在正文块之间复用完整短句；不截断句尾、不重复表格或公式。
                         for (int i = buffer.size() - 1; i >= Math.max(0, buffer.size() - 2); i--) {
@@ -117,6 +124,7 @@ public class PaperChunker {
                 }
             }
         }
+        // 5、输出最后一批尚未生成分块的片段
         if (!buffer.isEmpty()) {
             emit(buffer, prefix, paper, job, result, maximum);
         }
@@ -126,12 +134,14 @@ public class PaperChunker {
      * 优先采用解析器提供的句子；正文缺少句子信息时使用英文句子边界规则，其他类型整体保留
      */
     private List<String> sentences(ParsedPaper.Paragraph block) {
+        // 1、保留非正文内容的原文，正文优先使用解析器提供的句子
         if (!block.kind().equals("paragraph")) {
             return List.of(block.text());
         }
         if (!block.sentences().isEmpty()) {
             return block.sentences();
         }
+        // 2、缺少句子标记时，按英文句子边界提取非空文本
         BreakIterator iterator = BreakIterator.getSentenceInstance(Locale.ENGLISH);
         iterator.setText(block.text());
         List<String> result = new ArrayList<>();
@@ -149,6 +159,7 @@ public class PaperChunker {
      * 拆分超长内容；表格表头较短时为拆分后的行片段补充相同表头
      */
     private List<String> splitBlock(String text, String kind, int budget) {
+        // 1、表格超长且表头较短时，为拆出的每个行片段补上表头
         if (kind.equals("table") && encoding.countTokens(text) > budget) {
             int rowStart = text.lastIndexOf('\n');
             if (rowStart > 0) {
@@ -160,6 +171,7 @@ public class PaperChunker {
                 }
             }
         }
+        // 2、其余内容按统一的长度预算切分
         return hardSplit(text, budget);
     }
 
@@ -179,10 +191,12 @@ public class PaperChunker {
      */
     private void emit(List<Piece> pieces, String prefix, Paper paper, PaperProcessingJob job,
                       List<Document> result, int maximum) {
+        // 1、拼接标题前缀和正文，校验完整分块的长度
         String content = prefix + "\n\n" + String.join("\n", pieces.stream().map(Piece::text).toList());
         if (encoding.countTokens(content) > maximum) {
             throw new IllegalStateException("分块超过长度上限");
         }
+        // 2、记录论文归属、本次执行令牌以及章节和来源块信息
         var metadata = new HashMap<String, Object>();
         metadata.put("ownerId", paper.getUserId().toString()); metadata.put("paperId", paper.getId().toString());
         metadata.put("indexVersion", job.getIndexVersion()); metadata.put("attemptToken", job.getLeaseToken());
@@ -192,17 +206,20 @@ public class PaperChunker {
         metadata.put("sourceBlockIds", pieces.stream().map(p -> p.block().blockId()).filter(s -> !s.isBlank()).distinct().toList());
         metadata.put("referenceIds", pieces.stream().flatMap(p -> p.block().references().stream()).distinct().toList());
         metadata.put("lowConfidence", pieces.stream().anyMatch(p -> p.block().lowConfidence()));
+        // 3、所有片段都有页码时才记录分块的起止页
         boolean known = pieces.stream().allMatch(p -> p.block().pageStart() != null && p.block().pageEnd() != null);
         metadata.put("pageKnown", known);
         if (known) {
             metadata.put("pageStart", pieces.stream().mapToInt(p -> p.block().pageStart()).min().orElseThrow());
             metadata.put("pageEnd", pieces.stream().mapToInt(p -> p.block().pageEnd()).max().orElseThrow());
         }
+        // 4、补齐处理版本，用论文 ID、索引版本、租约令牌和块序号生成文档 ID
         metadata.put("title", Objects.toString(paper.getTitle(), ""));
         metadata.put("embeddingModel", job.getEmbeddingModel()); metadata.put("embeddingVersion", job.getEmbeddingVersion());
         metadata.put("parserVersion", job.getParserVersion()); metadata.put("chunkingVersion", job.getChunkingVersion());
         String id = paper.getId() + ":" + job.getIndexVersion() + ":" + job.getLeaseToken() + ":" + result.size();
         metadata.put("chunkId", id);
+        // 5、加入索引文档，并检查单篇论文的分块数量上限
         result.add(new Document(id, content, metadata));
         if (result.size() > 20000) {
             throw new IllegalArgumentException("论文分块过多");
@@ -222,11 +239,13 @@ public class PaperChunker {
     private List<String> hardSplit(String text, int budget) {
         List<String> result = new ArrayList<>();
         String remaining = text.strip();
+        // 1、剩余文本能放入一个块时，直接收下并结束切分
         while (!remaining.isEmpty()) {
             if (encoding.countTokens(remaining) <= budget) {
                 result.add(remaining);
                 break;
             }
+            // 2、按 Unicode 码点二分查找当前预算能容纳的前缀
             int[] points = remaining.codePoints().toArray();
             int low = 1, high = points.length, best = 0;
             while (low <= high) {
@@ -241,6 +260,7 @@ public class PaperChunker {
             if (best == 0) {
                 throw new IllegalArgumentException("长度预算无法容纳单个字符");
             }
+            // 3、保存切出的片段，继续处理剩余文本
             String part = new String(points, 0, best).strip();
             if (!part.isEmpty()) {
                 result.add(part);

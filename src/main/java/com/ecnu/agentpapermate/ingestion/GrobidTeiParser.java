@@ -41,6 +41,7 @@ final class GrobidTeiParser {
      * 禁用外部实体及 DTD，提取 TEI 中的论文元数据、摘要、正文和显式附录
      */
     ParsedPaper parse(String xml) {
+        // 1、检查 GROBID 返回的内容，禁用外部 DTD 和 Schema 后解析 XML
         if (xml == null || xml.isBlank()) {
             throw new IllegalArgumentException("GROBID 返回空 TEI");
         }
@@ -65,6 +66,7 @@ final class GrobidTeiParser {
             if (!"TEI".equals(root.getLocalName())) {
                 throw new IllegalArgumentException("响应不是 TEI");
             }
+            // 2、从 TEI 头部提取标题和作者，并判断作者信息是否可信
             Element header = child(root, "teiHeader");
             Element file = child(header, "fileDesc");
             String title = text(child(child(file, "titleStmt"), "title"));
@@ -92,6 +94,7 @@ final class GrobidTeiParser {
                     authorsTrusted = false;
                 }
             }
+            // 3、按摘要、正文、显式附录的顺序提取可索引内容
             Element abstractElement = child(child(header, "profileDesc"), "abstract");
             if (abstractElement != null) {
                 add(abstractElement, new Section("Abstract", "abstract"), "abstract", text(abstractElement), false);
@@ -104,6 +107,7 @@ final class GrobidTeiParser {
                     walk(div, new Section("Appendix", "appendix-" + sequence++));
                 }
             }
+            // 4、根据 surface 元素数量记录页数，并汇总论文解析结果
             int surfaces = root.getElementsByTagNameNS("*", "surface").getLength();
             return new ParsedPaper(title, String.join(", ", authors), text(abstractElement),
                     surfaces == 0 ? null : surfaces, List.copyOf(blocks), authorsTrusted);
@@ -117,6 +121,7 @@ final class GrobidTeiParser {
      */
     private Section walk(Element container, Section section) {
         boolean tableFragment = false;
+        // 1、按文档顺序遍历子元素，遇到正文分区时递归处理
         for (Element element : children(container, null)) {
             String tag = element.getLocalName();
             switch (tag) {
@@ -126,6 +131,7 @@ final class GrobidTeiParser {
                     }
                 }
                 case "head" -> {
+                    // 2、区分章节标题与误标为标题的表格片段，更新当前章节或表格标记
                     String heading = text(element);
                     if (tableHeading(heading)) {
                         tableFragment = true;
@@ -137,6 +143,7 @@ final class GrobidTeiParser {
                     }
                 }
                 case "p", "item" -> {
+                    // 3、识别段落中的编号标题，其余文本按正文或表格片段保存
                     String value = text(element);
                     if (MISSED_HEADING.matcher(value).matches()) {
                         int space = value.indexOf(' ');
@@ -146,6 +153,7 @@ final class GrobidTeiParser {
                         add(element, section, tableFragment ? "table-fragment" : "paragraph", value, tableFragment);
                     }
                 }
+                // 4、分别处理公式、图表和列表，保留对应的内容类型
                 case "formula" -> add(element, section, "formula", text(element), false);
                 case "figure" -> figure(element, section);
                 case "list" -> walk(element, section);
@@ -159,10 +167,12 @@ final class GrobidTeiParser {
      * 记录带编号标题并拼接已知父章节路径，为章节生成独立标识
      */
     private Section section(String number, String title) {
+        // 1、为无编号标题建立独立章节，按编号登记其余标题
         if (number.isBlank()) {
             return new Section(title, "section-" + sequence++);
         }
         numberedTitles.put(number, number + " " + title);
+        // 2、查找已知父章节，将父标题和当前标题拼成路径
         List<String> path = new ArrayList<>();
         for (int dot = number.indexOf('.'); dot >= 0; dot = number.indexOf('.', dot + 1)) {
             String parent = numberedTitles.get(number.substring(0, dot));
@@ -178,12 +188,14 @@ final class GrobidTeiParser {
      * 提取图注或按行提取表格，保留表头并标记结构不确定的表格内容
      */
     private void figure(Element figure, Section section) {
+        // 1、提取图表说明，为直接挂在正文下的浮动图表单独分配章节
         String caption = String.join(" ", text(child(figure, "head")), text(child(figure, "figDesc"))).strip();
         Element table = child(figure, "table");
         // GROBID 常将浮动图表集中放在 body 末尾，不能归属到最后一个正文小节。
         if (figure.getParentNode() instanceof Element parent && "body".equals(parent.getLocalName())) {
             section = new Section(table == null ? "Figures" : "Tables", "object-" + sequence++);
         }
+        // 2、插图保存图注，缺少行结构的表格保留全文并标记低置信度
         if (table == null) {
             add(figure, section, "figure", caption, false);
             return;
@@ -193,11 +205,13 @@ final class GrobidTeiParser {
             add(figure, section, "table", caption + "\n" + text(table), true);
             return;
         }
+        // 3、提取表头，检查列数、合并列和单元格文本是否提示结构异常
         String header = rowText(rows.getFirst());
         int columns = children(rows.getFirst(), "cell").size();
         boolean uncertain = rows.stream().anyMatch(row -> children(row, "cell").size() != columns
                 || children(row, "cell").stream().anyMatch(cell -> cell.hasAttribute("cols")
                 || text(cell).matches(".*\\d\\.\\d+\\s+\\d\\.\\d+\\s+\\d\\.\\d+.*")));
+        // 4、为表格分配独立标识，逐行保存图表说明、表头及对应行文本
         String tableId = figure.getAttributeNS(XMLConstants.XML_NS_URI, "id");
         Section tableSection = new Section(section.title(), "table:" + (tableId.isBlank() ? sequence++ : tableId));
         if (rows.size() == 1) {
@@ -218,15 +232,18 @@ final class GrobidTeiParser {
      * 保存有效内容块，提取页码和引用标识，并仅保留完整覆盖段落的句子列表
      */
     private void add(Element element, Section section, String kind, String value, boolean uncertain) {
+        // 1、跳过空白或没有字母、数字的内容
         if (value.isBlank() || value.codePoints().noneMatch(Character::isLetterOrDigit)) {
             return;
         }
+        // 2、收集页码并确定来源块 ID，缺失 ID 时按解析顺序生成
         List<Integer> pages = new ArrayList<>();
         collectPages(element, pages);
         String id = element.getAttributeNS(XMLConstants.XML_NS_URI, "id");
         if (id.isBlank()) {
             id = "block-" + sequence++;
         }
+        // 3、提取引用目标，去掉本地引用的井号前缀
         List<String> refs = new ArrayList<>();
         var references = element.getElementsByTagNameNS("*", "ref");
         for (int i = 0; i < references.getLength(); i++) {
@@ -237,6 +254,7 @@ final class GrobidTeiParser {
                 }
             }
         }
+        // 4、提取正文句子，只有完整覆盖段落文本时才保留句子列表
         List<String> sentences = new ArrayList<>();
         if (kind.equals("paragraph")) {
             var nodes = element.getElementsByTagNameNS("*", "s");
@@ -248,6 +266,7 @@ final class GrobidTeiParser {
                 sentences.clear();
             }
         }
+        // 5、保存内容块及其章节、页码范围、引用和置信度标记
         blocks.add(new ParsedPaper.Paragraph(value, section.title(), pages.stream().min(Integer::compare).orElse(null),
                 pages.stream().max(Integer::compare).orElse(null), id, kind, section.id(), uncertain,
                 refs.stream().distinct().toList(), List.copyOf(sentences)));
@@ -257,6 +276,7 @@ final class GrobidTeiParser {
      * 递归读取元素坐标中的正整数页码，忽略无法解析的页码
      */
     private static void collectPages(Element element, List<Integer> pages) {
+        // 1、从当前元素的坐标读取有效物理页码
         String coords = element.getAttribute("coords");
         if (!coords.isBlank()) {
             for (String box : coords.split(";")) {
@@ -270,6 +290,7 @@ final class GrobidTeiParser {
                 }
             }
         }
+        // 2、递归收集子元素页码，供内容块计算起止页
         for (Element child : children(element, null)) {
             collectPages(child, pages);
         }

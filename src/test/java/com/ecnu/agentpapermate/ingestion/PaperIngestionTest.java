@@ -2,6 +2,7 @@ package com.ecnu.agentpapermate.ingestion;
 
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
+import com.ecnu.agentpapermate.config.paper.PaperElasticsearchConfiguration;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionConfiguration;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
 import com.ecnu.agentpapermate.config.paper.PaperJobSchedulerProperties;
@@ -165,7 +166,7 @@ class PaperIngestionTest {
             var info = new CosManager.PaperFileInfo(); info.setFileHash("expected"); return info;
         });
         var configuration = new PaperIngestionConfiguration();
-        es = configuration.paperElasticsearchClient(properties, elasticsearch);
+        es = new PaperElasticsearchConfiguration().paperElasticsearchClient(properties, elasticsearch);
         heartbeat = Executors.newSingleThreadScheduledExecutor();
         processor = new PaperJobProcessor(properties, processing, new PaperJobSchedulerProperties(), papers, cos,
                 new GrobidClient(properties), new PaperChunker(json),

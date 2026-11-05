@@ -34,16 +34,19 @@ public final class PaperLease implements AutoCloseable {
      */
     public PaperLease(PaperProcessingJob job, PaperJobClaimService jobs,
                       PaperIngestionProperties properties, ScheduledExecutorService executor) {
+        // 1、计算本次执行的截止时间，立即续期以确认任务仍由当前工作线程持有
         deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(properties.getMaxDurationSeconds());
         if (!jobs.renew(job, properties.getMaxDurationSeconds())) {
             throw new IllegalStateException("领取租约已失效");
         }
+        // 2、记录工作线程，按心跳间隔调度后续续期
         Thread worker = Thread.currentThread();
         heartbeat = executor.scheduleWithFixedDelay(() -> {
             if (closed.get() || lost.get()) {
                 return;
             }
             try {
+                // 3、达到截止时间或续期失败时标记租约失效，并尝试中断工作线程
                 if (System.nanoTime() >= deadline || !jobs.renew(job, properties.getMaxDurationSeconds())) {
                     lost.set(true);
                     if (!closed.get()) {
@@ -73,7 +76,9 @@ public final class PaperLease implements AutoCloseable {
      */
     @Override
     public void close() {
+        // 1、先标记关闭，让正在执行的心跳可以检查到关闭状态
         closed.set(true);
+        // 2、取消后续心跳，允许正在执行的心跳自行结束
         heartbeat.cancel(false);
     }
 }

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ecnu.agentpapermate.mapper.ReadingNoteMapper">
+
+    <resultMap id="BaseResultMap" type="com.ecnu.agentpapermate.entity.model.ReadingNote">
+        <id column="id" property="id" />
+        <result column="user_id" property="userId" />
+        <result column="paper_id" property="paperId" />
+        <result column="research_question" property="researchQuestion" />
+        <result column="methods" property="methods" />
+        <result column="innovations" property="innovations" />
+        <result column="experiment_results" property="experimentResults" />
+        <result column="limitations_questions" property="limitationsQuestions" />
+        <result column="personal_thoughts" property="personalThoughts" />
+        <result column="version" property="version" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+        <result column="is_delete" property="isDelete" />
+    </resultMap>
+
+    <select id="getByUserAndPaper" resultMap="BaseResultMap">
+        SELECT id, user_id, paper_id, research_question, methods, innovations, experiment_results,
+               limitations_questions, personal_thoughts, version, create_time, update_time, is_delete
+        FROM reading_note
+        WHERE user_id = #{userId} AND paper_id = #{paperId} AND is_delete = 0
+    </select>
+    <update id="updateByVersion">
+        UPDATE reading_note
+        SET research_question = COALESCE(#{note.researchQuestion}, research_question),
+            methods = COALESCE(#{note.methods}, methods),
+            innovations = COALESCE(#{note.innovations}, innovations),
+            experiment_results = COALESCE(#{note.experimentResults}, experiment_results),
+            limitations_questions = COALESCE(#{note.limitationsQuestions}, limitations_questions),
+            personal_thoughts = COALESCE(#{note.personalThoughts}, personal_thoughts),
+            version = version + 1
+        WHERE user_id = #{userId} AND paper_id = #{note.paperId}
+          AND version = #{note.version} AND is_delete = 0
+          AND EXISTS (SELECT 1 FROM paper WHERE id = #{note.paperId} AND user_id = #{userId} AND is_delete = 0)
+    </update>
+</mapper>

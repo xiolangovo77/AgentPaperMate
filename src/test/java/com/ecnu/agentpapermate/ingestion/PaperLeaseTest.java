@@ -2,7 +2,7 @@ package com.ecnu.agentpapermate.ingestion;
 
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
-import com.ecnu.agentpapermate.service.PaperJobClaimService;
+import com.ecnu.agentpapermate.service.run.paper.PaperJobClaimService;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import java.util.concurrent.ScheduledExecutorService;

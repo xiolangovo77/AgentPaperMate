@@ -14,4 +14,10 @@
         <result column="is_delete" property="isDelete" />
     </resultMap>
 
+    <select id="selectAfterSequence" resultMap="BaseResultMap">
+        SELECT * FROM run_event
+        WHERE is_delete = 0 AND run_id = #{runId} AND event_seq &gt; #{after}
+        ORDER BY event_seq ASC
+        LIMIT #{limit}
+    </select>
 </mapper>

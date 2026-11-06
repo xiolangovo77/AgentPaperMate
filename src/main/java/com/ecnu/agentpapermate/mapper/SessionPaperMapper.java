@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.ecnu.agentpapermate.entity.model.SessionPaper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import java.util.List;
 
 /**
  * <p>
@@ -23,4 +24,7 @@ public interface SessionPaperMapper extends BaseMapper<SessionPaper> {
 
     /** 显式更新逻辑删除状态，支持恢复已移出的关联。 */
     int updateMembership(@Param("id") Long id, @Param("isDelete") byte isDelete);
+
+    /** 按论文 ID 读取有效资料，创建任务时多取一条以检查资料数量上限。 */
+    List<SessionPaper> selectActiveForRun(@Param("sessionId") Long sessionId, @Param("limit") int limit);
 }

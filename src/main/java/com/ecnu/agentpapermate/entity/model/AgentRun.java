@@ -29,7 +29,7 @@ public class AgentRun implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 一次问答任务ID，即runId
+     * 一次问答任务 ID，即 runId，由 MyBatis-Plus 分配雪花 ID。
      */
     @TableId(value = "id", type = IdType.ASSIGN_ID)
     private Long id;

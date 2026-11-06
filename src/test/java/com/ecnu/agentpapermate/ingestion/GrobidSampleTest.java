@@ -3,6 +3,8 @@ package com.ecnu.agentpapermate.ingestion;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
 import com.ecnu.agentpapermate.entity.model.Paper;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
+import com.ecnu.agentpapermate.ingestion.grobid.GrobidClient;
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.EncodingType;

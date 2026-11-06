@@ -11,6 +11,12 @@ import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperAddRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperQueryRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperUpdateRequest;
 import com.ecnu.agentpapermate.entity.model.Paper;
+import com.ecnu.agentpapermate.entity.model.ChatSession;
+import com.ecnu.agentpapermate.entity.model.ChatMessage;
+import com.ecnu.agentpapermate.mapper.ChatMessageMapper;
+import com.ecnu.agentpapermate.support.json.RagJson;
+import java.util.ArrayList;
+import java.util.Map;
 import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.exception.ThrowUtils;
@@ -33,10 +39,30 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, SessionPaper> implements SessionPaperService {
 
+    /**
+     * 会话论文关联数据访问接口，负责新增、恢复、移出及查询资料关联。
+     */
     private final SessionPaperMapper sessionPaperMapper;
+    /**
+     * 聊天室数据访问接口，资料变化时递增范围版本并更新最近活动时间。
+     */
     private final ChatSessionMapper chatSessionMapper;
+    /**
+     * 论文数据访问接口，用于校验资料归属和读取论文标题。
+     */
     private final PaperMapper paperMapper;
+    /**
+     * 聊天室业务服务，校验会话归属并通过会话锁串行处理资料变更。
+     */
     private final ChatSessionService chatSessionService;
+    /**
+     * 聊天消息数据访问接口，与资料变更在同一事务中保存系统消息。
+     */
+    private final ChatMessageMapper chatMessageMapper;
+    /**
+     * JSON 转换工具，用于保存资料变更前后论文集合、范围版本等补充信息。
+     */
+    private final RagJson ragJson;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -44,7 +70,7 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
         //1、校验请求并锁定所属聊天室，避免并发重复添加或丢失版本更新
         ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
         validateId(request.getPaperId());
-        chatSessionService.lockSession(request.getSessionId(), userId);
+        ChatSession session = chatSessionService.lockSession(request.getSessionId(), userId);
         requireOwnedPaper(request.getPaperId(), userId);
 
         //2、读取含已移出的关联，重复添加当前论文直接返回原ID
@@ -74,6 +100,7 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
 
         //4、同一事务内递增论文范围版本并更新最近活动时间，任一步失败都回滚
         requireChanged(chatSessionMapper.incrementScopeVersion(request.getSessionId(), userId));
+        recordScopeChange(session, request.getPaperId(), true);
         return id;
     }
 
@@ -123,7 +150,7 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
         //2、先定位聊天室，再按聊天室、论文关联的顺序加锁并读取最新状态
         SessionPaper relation = sessionPaperMapper.selectIncludingRemoved(request.getId());
         ThrowUtils.throwIf(relation == null, ErrorCode.NOT_FOUND_ERROR, "论文关联不存在");
-        chatSessionService.lockSession(relation.getSessionId(), userId);
+        ChatSession session = chatSessionService.lockSession(relation.getSessionId(), userId);
         SessionPaper current = sessionPaperMapper.selectPairForUpdate(relation.getSessionId(), relation.getPaperId());
         ThrowUtils.throwIf(current == null, ErrorCode.NOT_FOUND_ERROR, "论文关联不存在");
 
@@ -138,7 +165,29 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
         //4、原子更新关联状态、论文范围版本和最近活动时间
         requireChanged(sessionPaperMapper.updateMembership(current.getId(), request.getIsDelete()));
         requireChanged(chatSessionMapper.incrementScopeVersion(current.getSessionId(), userId));
+        recordScopeChange(session, current.getPaperId(), request.getIsDelete() == 0);
         return true;
+    }
+
+    private void recordScopeChange(ChatSession session, Long paperId, boolean added) {
+        //1、在集合实际变更后读取完整范围，反推变更前集合并记录版本
+        var after = sessionPaperMapper.selectList(new QueryWrapper<SessionPaper>().eq("session_id", session.getId())
+                .orderByAsc("paper_id")).stream().map(SessionPaper::getPaperId).toList();
+        var before = new ArrayList<>(after);
+        if (added) before.remove(paperId);
+        else if (!before.contains(paperId)) before.add(paperId);
+        before.sort(Long::compareTo);
+        Paper paper = paperMapper.selectById(paperId);
+        String title = paper == null ? "论文 " + paperId : paper.getTitle();
+
+        //2、消息与关联、版本更新处于同一事务，不创建 Run，不改变活动任务快照
+        ChatMessage message = new ChatMessage();
+        message.setSessionId(session.getId()); message.setRole("system"); message.setMessageType("scope_change");
+        message.setContent((added ? "已添加资料：《" : "已移除资料：《") + title + "》");
+        message.setExtraData(ragJson.write(Map.of("beforePaperIds", before, "afterPaperIds", after,
+                "scopeVersion", session.getScopeVersion() + 1, "paperId", paperId, "action", added ? "added" : "removed")));
+        message.setIsDelete((byte) 0);
+        requireChanged(chatMessageMapper.insert(message));
     }
 
     private void requireOwnedPaper(Long paperId, Long userId) {

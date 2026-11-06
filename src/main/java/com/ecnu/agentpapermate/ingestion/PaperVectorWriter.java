@@ -47,7 +47,7 @@ public class PaperVectorWriter {
      * 注入向量写入依赖，并校验索引使用余弦相似度
      */
     public PaperVectorWriter(@Qualifier("paperElasticsearchClient") RestClient client,
-                             EmbeddingModel embedding, ObjectMapper json, ElasticsearchVectorStoreProperties properties) {
+                             @Qualifier("paperEmbeddingModel") EmbeddingModel embedding, ObjectMapper json, ElasticsearchVectorStoreProperties properties) {
         this.client = client;
         this.embedding = embedding;
         this.json = json;

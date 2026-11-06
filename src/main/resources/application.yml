@@ -19,6 +19,7 @@ spring:
           dimensions: 1024
           text-type: document
       chat:
+        # 由 RagConfiguration 创建带执行预算的 ragChatModel，关闭自动配置避免重复 Bean。
         enabled: false
       rerank:
         enabled: false
@@ -99,3 +100,19 @@ paper:
       heartbeat-seconds: 20
       max-duration-seconds: 1800
       embedding-batch-size: 10
+
+# 固定问答沿用 spring.ai.dashscope 的原生 base-url、api-key，不使用兼容接口。
+rag:
+  enabled: true
+  model: qwen3.7-plus
+  max-output-tokens: 2048
+  request-timeout-seconds: 60
+  run-timeout-seconds: 180
+  queue-timeout-seconds: 300
+  poll-interval-ms: 1000
+  max-concurrent-runs: 4
+  retrieval-top-k: 20
+  max-evidence: 8
+  evidence-token-budget: 6000
+  max-papers: 50
+  max-sse-connections: 100

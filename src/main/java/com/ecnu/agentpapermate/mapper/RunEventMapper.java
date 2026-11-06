@@ -3,6 +3,8 @@ package com.ecnu.agentpapermate.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.ecnu.agentpapermate.entity.model.RunEvent;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
+import java.util.List;
 
 /**
  * <p>
@@ -14,5 +16,7 @@ import org.apache.ibatis.annotations.Mapper;
  */
 @Mapper
 public interface RunEventMapper extends BaseMapper<RunEvent> {
-
+    /** 按任务内序号补发游标之后的有效事件。 */
+    List<RunEvent> selectAfterSequence(@Param("runId") Long runId, @Param("after") Long after,
+                                      @Param("limit") int limit);
 }

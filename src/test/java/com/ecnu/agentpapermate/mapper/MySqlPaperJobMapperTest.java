@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.mapper;
 
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.session.SqlSession;
@@ -72,7 +73,7 @@ class MySqlPaperJobMapperTest {
     @Test
     void completionChecksLeaseAndAtomicallyPublishesAttempt() throws Exception {
         mapper.claim(1L, "lease-a", 120);
-        var parsed = new com.ecnu.agentpapermate.ingestion.ParsedPaper("Title", "Author", "Abstract", 3, java.util.List.of());
+        var parsed = new ParsedPaper("Title", "Author", "Abstract", 3, java.util.List.of());
         assertEquals(0, mapper.complete(claimed("stale"), parsed, 2, 1800));
         assertTrue(mapper.complete(claimed("lease-a"), parsed, 2, 1800) > 0);
         assertEquals("completed", field("status"));
@@ -88,7 +89,7 @@ class MySqlPaperJobMapperTest {
     void metadataPersistsBeforeCompletionAndUncertainAuthorsDoNotOverwrite() throws Exception {
         mapper.claim(1L, "lease-a", 120);
         execute("UPDATE paper SET authors='Existing Author', page_count=10");
-        var parsed = new com.ecnu.agentpapermate.ingestion.ParsedPaper("Parsed title", "Uncertain authors", "Abstract", null,
+        var parsed = new ParsedPaper("Parsed title", "Uncertain authors", "Abstract", null,
                 java.util.List.of(), false);
         assertEquals(0, mapper.updateParsedMetadata(claimed("stale"), parsed));
         assertTrue(mapper.updateParsedMetadata(claimed("lease-a"), parsed) > 0);

@@ -1,10 +1,11 @@
-package com.ecnu.agentpapermate.service;
+package com.ecnu.agentpapermate.service.run.paper;
 
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
 import com.ecnu.agentpapermate.config.paper.PaperJobSchedulerProperties;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
 import com.ecnu.agentpapermate.ingestion.*;
+import com.ecnu.agentpapermate.ingestion.grobid.GrobidClient;
 import com.ecnu.agentpapermate.mange.CosManager;
 import com.ecnu.agentpapermate.mapper.PaperMapper;
 import org.springframework.beans.factory.annotation.Qualifier;

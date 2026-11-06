@@ -29,7 +29,7 @@ public class ChatMessage implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 消息ID
+     * 消息 ID，由 MyBatis-Plus 分配雪花 ID。
      */
     @TableId(value = "id", type = IdType.ASSIGN_ID)
     private Long id;

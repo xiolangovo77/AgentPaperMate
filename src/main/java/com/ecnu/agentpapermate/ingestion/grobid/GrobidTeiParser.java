@@ -1,5 +1,6 @@
-package com.ecnu.agentpapermate.ingestion;
+package com.ecnu.agentpapermate.ingestion.grobid;
 
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.xml.sax.InputSource;

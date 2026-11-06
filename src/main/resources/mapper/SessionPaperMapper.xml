@@ -27,4 +27,10 @@
         SET is_delete = #{isDelete}, update_time = CURRENT_TIMESTAMP(3)
         WHERE id = #{id} AND is_delete != #{isDelete}
     </update>
+    <select id="selectActiveForRun" resultMap="BaseResultMap">
+        SELECT * FROM session_paper
+        WHERE is_delete = 0 AND session_id = #{sessionId}
+        ORDER BY paper_id ASC
+        LIMIT #{limit}
+    </select>
 </mapper>

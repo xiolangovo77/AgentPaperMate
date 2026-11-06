@@ -28,4 +28,15 @@
             last_message_time = CURRENT_TIMESTAMP(3), update_time = CURRENT_TIMESTAMP(3)
         WHERE id = #{id} AND user_id = #{userId} AND is_delete = 0
     </update>
+    <update id="assignActiveRun">
+        UPDATE chat_session
+        SET active_run_id = #{runId}, input_draft = '', last_message_time = CURRENT_TIMESTAMP(3)
+        WHERE id = #{sessionId} AND is_delete = 0
+    </update>
+
+    <update id="releaseActiveRun">
+        UPDATE chat_session
+        SET active_run_id = NULL, last_message_time = CURRENT_TIMESTAMP(3)
+        WHERE id = #{sessionId} AND active_run_id = #{runId} AND is_delete = 0
+    </update>
 </mapper>

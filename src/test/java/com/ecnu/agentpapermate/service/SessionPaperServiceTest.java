@@ -8,6 +8,10 @@ import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperUpdateRequest
 import com.ecnu.agentpapermate.entity.model.ChatSession;
 import com.ecnu.agentpapermate.entity.model.Paper;
 import com.ecnu.agentpapermate.entity.model.SessionPaper;
+import com.ecnu.agentpapermate.entity.model.ChatMessage;
+import com.ecnu.agentpapermate.mapper.ChatMessageMapper;
+import com.ecnu.agentpapermate.support.json.RagJson;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.mapper.ChatSessionMapper;
@@ -34,6 +38,7 @@ class SessionPaperServiceTest {
     private final ChatSessionMapper sessions = mock(ChatSessionMapper.class);
     private final PaperMapper papers = mock(PaperMapper.class);
     private final ChatSessionService chatService = mock(ChatSessionService.class);
+    private final ChatMessageMapper messages = mock(ChatMessageMapper.class);
     private final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     private final SimpleTransactionStatus txStatus = new SimpleTransactionStatus();
     private SessionPaperService service;
@@ -41,12 +46,16 @@ class SessionPaperServiceTest {
     @BeforeEach
     void setUp() {
         when(transactions.getTransaction(any())).thenReturn(txStatus);
-        var target = new SessionPaperServiceImpl(relations, sessions, papers, chatService);
+        var target = new SessionPaperServiceImpl(relations, sessions, papers, chatService, messages, new RagJson(new ObjectMapper()));
         ReflectionTestUtils.setField(target, "baseMapper", relations);
         var proxy = new ProxyFactory(target);
         proxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
         service = (SessionPaperService) proxy.getProxy();
-        when(chatService.lockSession(100L, 42L)).thenReturn(new ChatSession());
+        var session = new ChatSession();
+        session.setId(100L); session.setScopeVersion(1);
+        when(chatService.lockSession(100L, 42L)).thenReturn(session);
+        when(messages.insert(any(ChatMessage.class))).thenReturn(1);
+        when(relations.selectList(any())).thenReturn(java.util.List.of(relation((byte) 0)));
         when(papers.selectOne(any())).thenReturn(new Paper());
         when(sessions.incrementScopeVersion(100L, 42L)).thenReturn(1);
         when(relations.updateMembership(anyLong(), anyByte())).thenReturn(1);
@@ -59,18 +68,24 @@ class SessionPaperServiceTest {
     @Test
     void addsRelationAfterSessionLockAndCommitsVersionInSameTransaction() {
         assertEquals(300L, service.addSessionPaper(addRequest(), 42L));
-        var order = inOrder(transactions, chatService, relations, sessions);
+        var order = inOrder(transactions, chatService, relations, sessions, messages);
         order.verify(transactions).getTransaction(any());
         order.verify(chatService).lockSession(100L, 42L);
         order.verify(relations).selectPairForUpdate(100L, 200L);
         var captor = ArgumentCaptor.forClass(SessionPaper.class);
         order.verify(relations).insert(captor.capture());
         order.verify(sessions).incrementScopeVersion(100L, 42L);
+        var message = ArgumentCaptor.forClass(ChatMessage.class);
+        order.verify(messages).insert(message.capture());
         order.verify(transactions).commit(txStatus);
         assertEquals(100L, captor.getValue().getSessionId());
         assertEquals(200L, captor.getValue().getPaperId());
         assertEquals((byte) 0, captor.getValue().getIsDelete());
         assertNull(captor.getValue().getCreateTime());
+        assertEquals("system", message.getValue().getRole());
+        assertEquals("scope_change", message.getValue().getMessageType());
+        assertNull(message.getValue().getRunId());
+        assertTrue(message.getValue().getExtraData().contains("\"scopeVersion\":2"));
     }
 
     @Test
@@ -80,6 +95,7 @@ class SessionPaperServiceTest {
         verify(relations, never()).insert(any(SessionPaper.class));
         verify(relations, never()).updateMembership(anyLong(), anyByte());
         verifyNoInteractions(sessions);
+        verifyNoInteractions(messages);
     }
 
     @Test
@@ -109,6 +125,15 @@ class SessionPaperServiceTest {
         when(sessions.incrementScopeVersion(100L, 42L)).thenReturn(0);
         assertThrows(BusinessException.class, () -> service.addSessionPaper(addRequest(), 42L));
         verify(relations).insert(any(SessionPaper.class));
+        verify(transactions).rollback(txStatus);
+        verify(transactions, never()).commit(any());
+    }
+
+    @Test
+    void scopeMessageFailureRollsBackMembershipAndVersion() {
+        when(messages.insert(any(ChatMessage.class))).thenReturn(0);
+        assertThrows(BusinessException.class, () -> service.addSessionPaper(addRequest(), 42L));
+        verify(sessions).incrementScopeVersion(100L, 42L);
         verify(transactions).rollback(txStatus);
         verify(transactions, never()).commit(any());
     }

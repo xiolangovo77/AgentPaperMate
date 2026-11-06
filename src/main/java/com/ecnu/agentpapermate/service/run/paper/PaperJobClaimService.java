@@ -1,4 +1,4 @@
-package com.ecnu.agentpapermate.service;
+package com.ecnu.agentpapermate.service.run.paper;
 
 import com.ecnu.agentpapermate.config.paper.PaperJobSchedulerProperties;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
@@ -9,7 +9,7 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.UUID;
-import com.ecnu.agentpapermate.ingestion.ParsedPaper;
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 
 /**
  * 所有行锁只在短事务内持有，事务提交后才允许执行外部工作。

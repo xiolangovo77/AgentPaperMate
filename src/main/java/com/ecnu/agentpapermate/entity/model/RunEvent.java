@@ -29,7 +29,7 @@ public class RunEvent implements Serializable {
     private static final long serialVersionUID = 1L;
 
     /**
-     * 事件记录主键，不是SSE序号
+     * 事件记录主键，由 MyBatis-Plus 分配雪花 ID，不是 SSE 序号。
      */
     @TableId(value = "id", type = IdType.ASSIGN_ID)
     private Long id;

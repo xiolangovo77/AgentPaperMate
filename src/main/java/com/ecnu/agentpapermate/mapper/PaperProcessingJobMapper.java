@@ -5,7 +5,7 @@ import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import java.util.List;
-import com.ecnu.agentpapermate.ingestion.ParsedPaper;
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 
 /**
  * <p>

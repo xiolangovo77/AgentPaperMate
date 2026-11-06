@@ -35,4 +35,25 @@
         <result column="is_delete" property="isDelete" />
     </resultMap>
 
+    <select id="selectForUpdate" resultMap="BaseResultMap">
+        SELECT * FROM agent_run WHERE id = #{id} AND is_delete = 0 FOR UPDATE
+    </select>
+
+    <select id="selectExpiredCandidates" resultMap="BaseResultMap">
+        SELECT * FROM agent_run
+        WHERE is_delete = 0
+          AND (
+              (status = 'running' AND deadline &lt;= #{now})
+              OR (status = 'pending' AND create_time &lt;= #{queuedBefore})
+          )
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectPendingCandidates" resultMap="BaseResultMap">
+        SELECT * FROM agent_run
+        WHERE is_delete = 0 AND status = 'pending'
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
 </mapper>

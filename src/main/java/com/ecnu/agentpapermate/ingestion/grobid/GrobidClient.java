@@ -1,6 +1,7 @@
-package com.ecnu.agentpapermate.ingestion;
+package com.ecnu.agentpapermate.ingestion.grobid;
 
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;

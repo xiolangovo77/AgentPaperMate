@@ -16,4 +16,11 @@
         <result column="is_delete" property="isDelete" />
     </resultMap>
 
+    <select id="selectPreviousQuestions" resultMap="BaseResultMap">
+        SELECT * FROM chat_message
+        WHERE is_delete = 0 AND session_id = #{sessionId}
+          AND role = 'user' AND run_id &lt; #{beforeRunId}
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
 </mapper>

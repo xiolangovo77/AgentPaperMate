@@ -2,8 +2,8 @@ package com.ecnu.agentpapermate.scheduler;
 
 import com.ecnu.agentpapermate.config.paper.PaperJobSchedulerProperties;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
-import com.ecnu.agentpapermate.service.PaperJobClaimService;
-import com.ecnu.agentpapermate.service.PaperJobProcessor;
+import com.ecnu.agentpapermate.service.run.paper.PaperJobClaimService;
+import com.ecnu.agentpapermate.service.run.paper.PaperJobProcessor;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;

@@ -1,0 +1,39 @@
+# 离线测试占位配置，不连接生产数据库、ES、COS 或模型服务。
+apm:
+  dashscope:
+    base-url: https://dashscope.aliyuncs.com
+    api-key: fake-test-key
+  elasticsearch:
+    url: http://localhost:9200
+    username: ""
+    password: ""
+  grobid:
+    url: http://localhost:8070
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/apm_test
+    username: test
+    password: test
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ""
+      ttl: 3600
+paper:
+  processing:
+    scheduler:
+      enabled: false
+    pipeline:
+      enabled: false
+rag:
+  enabled: false
+  scheduler:
+    enabled: false
+cos:
+  client:
+    host: https://files.example.com
+    secretId: fake-test-id
+    secretKey: fake-test-key
+    region: ap-shanghai
+    bucket: test-bucket

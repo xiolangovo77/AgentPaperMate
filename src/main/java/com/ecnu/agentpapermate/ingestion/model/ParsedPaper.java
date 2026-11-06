@@ -1,4 +1,4 @@
-package com.ecnu.agentpapermate.ingestion;
+package com.ecnu.agentpapermate.ingestion.model;
 
 import java.util.List;
 

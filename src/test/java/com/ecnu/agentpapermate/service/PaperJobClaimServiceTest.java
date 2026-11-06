@@ -2,7 +2,9 @@ package com.ecnu.agentpapermate.service;
 
 import com.ecnu.agentpapermate.config.paper.PaperJobSchedulerProperties;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
+import com.ecnu.agentpapermate.ingestion.model.ParsedPaper;
 import com.ecnu.agentpapermate.mapper.PaperProcessingJobMapper;
+import com.ecnu.agentpapermate.service.run.paper.PaperJobClaimService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -71,7 +73,7 @@ class PaperJobClaimServiceTest {
 
     @Test
     void parsedMetadataCommitsBeforeEmbeddingAndStaleLeaseRollsBack() {
-        var parsed = new com.ecnu.agentpapermate.ingestion.ParsedPaper("Title", "Author", "Abstract", null, List.of());
+        var parsed = new ParsedPaper("Title", "Author", "Abstract", null, List.of());
         when(mapper.updateParsedMetadata(job, parsed)).thenReturn(2, 0);
         service.updateParsedMetadata(job, parsed);
         verify(transactions).commit(status);

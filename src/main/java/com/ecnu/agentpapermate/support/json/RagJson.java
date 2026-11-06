@@ -1,0 +1,54 @@
+package com.ecnu.agentpapermate.support.json;
+
+import com.ecnu.agentpapermate.rag.model.Evidence;
+import com.ecnu.agentpapermate.rag.model.PaperScope;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/** 统一读取任务快照，禁止将反序列化异常当作空证据处理。 */
+@Component
+@RequiredArgsConstructor
+public class RagJson {
+    /**
+     * 应用统一的 JSON 映射器，沿用已配置的 ID 和时间序列化规则。
+     */
+    private final ObjectMapper mapper;
+
+    public String write(Object value) {
+        try {
+            return mapper.writeValueAsString(value);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("任务数据序列化失败", e);
+        }
+    }
+
+    public JsonNode tree(String value) {
+        try {
+            return mapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(value);
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("任务 JSON 数据无效", e);
+        }
+    }
+
+    public List<PaperScope> scopes(String value) {
+        try {
+            return mapper.readValue(value, new TypeReference<>() { });
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("任务论文快照无效", e);
+        }
+    }
+
+    public List<Evidence> evidence(String value) {
+        try {
+            return mapper.readValue(value, new TypeReference<>() { });
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("任务证据快照无效", e);
+        }
+    }
+}

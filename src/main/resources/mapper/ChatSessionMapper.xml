@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ecnu.agentpapermate.mapper.ChatSessionMapper">
+
+    <!-- 通用查询映射结果 -->
+    <resultMap id="BaseResultMap" type="com.ecnu.agentpapermate.entity.model.ChatSession">
+        <id column="id" property="id" />
+        <result column="user_id" property="userId" />
+        <result column="name" property="name" />
+        <result column="input_draft" property="inputDraft" />
+        <result column="scope_version" property="scopeVersion" />
+        <result column="active_run_id" property="activeRunId" />
+        <result column="last_message_time" property="lastMessageTime" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+        <result column="is_delete" property="isDelete" />
+    </resultMap>
+
+    <select id="selectOwnedForUpdate" resultMap="BaseResultMap">
+        SELECT * FROM chat_session
+        WHERE id = #{id} AND user_id = #{userId} AND is_delete = 0
+        FOR UPDATE
+    </select>
+
+    <update id="incrementScopeVersion">
+        UPDATE chat_session
+        SET scope_version = scope_version + 1,
+            last_message_time = CURRENT_TIMESTAMP(3), update_time = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND user_id = #{userId} AND is_delete = 0
+    </update>
+</mapper>

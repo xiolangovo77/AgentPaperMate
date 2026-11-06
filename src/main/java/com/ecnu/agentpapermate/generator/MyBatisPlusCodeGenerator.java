@@ -15,7 +15,7 @@ public class MyBatisPlusCodeGenerator {
 
     // 需要生成的表名
     private static final String[] TABLE_NAMES = {
-            "paper"
+            "chat_session","session_paper"
     };
 
     public static void main(String[] args) {

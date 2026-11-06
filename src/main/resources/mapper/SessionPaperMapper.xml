@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ecnu.agentpapermate.mapper.SessionPaperMapper">
+
+    <!-- 通用查询映射结果 -->
+    <resultMap id="BaseResultMap" type="com.ecnu.agentpapermate.entity.model.SessionPaper">
+        <id column="id" property="id" />
+        <result column="session_id" property="sessionId" />
+        <result column="paper_id" property="paperId" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+        <result column="is_delete" property="isDelete" />
+    </resultMap>
+
+    <select id="selectIncludingRemoved" resultMap="BaseResultMap">
+        SELECT * FROM session_paper WHERE id = #{id}
+    </select>
+
+    <select id="selectPairForUpdate" resultMap="BaseResultMap">
+        SELECT * FROM session_paper
+        WHERE session_id = #{sessionId} AND paper_id = #{paperId}
+        FOR UPDATE
+    </select>
+
+    <update id="updateMembership">
+        UPDATE session_paper
+        SET is_delete = #{isDelete}, update_time = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND is_delete != #{isDelete}
+    </update>
+</mapper>

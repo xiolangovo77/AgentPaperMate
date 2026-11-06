@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ecnu.agentpapermate.mapper.AgentRunMapper">
+
+    <!-- 通用查询映射结果 -->
+    <resultMap id="BaseResultMap" type="com.ecnu.agentpapermate.entity.model.AgentRun">
+        <id column="id" property="id" />
+        <result column="session_id" property="sessionId" />
+        <result column="user_id" property="userId" />
+        <result column="request_key" property="requestKey" />
+        <result column="user_query" property="userQuery" />
+        <result column="executor_type" property="executorType" />
+        <result column="status" property="status" />
+        <result column="scope_version" property="scopeVersion" />
+        <result column="papers_snapshot" property="papersSnapshot" />
+        <result column="evidence_snapshot" property="evidenceSnapshot" />
+        <result column="model_name" property="modelName" />
+        <result column="model_config" property="modelConfig" />
+        <result column="skill_id" property="skillId" />
+        <result column="skill_version" property="skillVersion" />
+        <result column="skill_content_hash" property="skillContentHash" />
+        <result column="input_tokens" property="inputTokens" />
+        <result column="output_tokens" property="outputTokens" />
+        <result column="step_count" property="stepCount" />
+        <result column="tool_call_count" property="toolCallCount" />
+        <result column="event_seq" property="eventSeq" />
+        <result column="start_time" property="startTime" />
+        <result column="end_time" property="endTime" />
+        <result column="deadline" property="deadline" />
+        <result column="error_code" property="errorCode" />
+        <result column="error_message" property="errorMessage" />
+        <result column="retry_of_run_id" property="retryOfRunId" />
+        <result column="create_time" property="createTime" />
+        <result column="update_time" property="updateTime" />
+        <result column="is_delete" property="isDelete" />
+    </resultMap>
+
+</mapper>

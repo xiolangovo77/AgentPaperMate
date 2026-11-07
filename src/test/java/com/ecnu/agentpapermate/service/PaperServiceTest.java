@@ -2,6 +2,10 @@ package com.ecnu.agentpapermate.service;
 
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.entity.dto.paper.PaperAddRequest;
+import com.ecnu.agentpapermate.entity.dto.paper.PaperQueryRequest;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import java.util.List;
 import com.ecnu.agentpapermate.entity.model.Paper;
 import com.ecnu.agentpapermate.entity.model.PaperProcessingJob;
 import com.ecnu.agentpapermate.entity.vo.paper.PaperAddVO;
@@ -34,6 +38,90 @@ class PaperServiceTest {
     private final ObjectMapper json = new ObjectMapper();
     private PaperServiceImpl service;
     private PaperAddRequest request;
+
+    @Test
+    void paginationCombinesFiltersAndOwnerWithStableOrderingAndPreservesTotal() {
+        PaperQueryRequest query = new PaperQueryRequest();
+        query.setPageNum(2); query.setPageSize(5);
+        query.setTitle(" attention "); query.setAuthors("Alice"); query.setTopic("AI"); query.setStatus("ready");
+        query.setSortField("id; DROP TABLE paper");
+        Paper paper = new Paper(); paper.setId(100L); paper.setTitle("attention");
+        Page<Paper> page = new Page<>(2, 5, 9); page.setRecords(List.of(paper));
+        when(papers.selectPage(any(Page.class), any())).thenReturn(page);
+
+        var result = service.listPapers(query, 42L);
+        assertEquals(9, result.getTotal()); assertEquals(2, result.getCurrent());
+        assertEquals(5, result.getSize()); assertEquals(100L, result.getRecords().getFirst().getId());
+        var wrapper = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(papers).selectPage(any(Page.class), wrapper.capture());
+        String sql = wrapper.getValue().getSqlSegment();
+        assertTrue(sql.contains("user_id =")); assertTrue(sql.contains("title LIKE"));
+        assertTrue(sql.contains("authors LIKE")); assertTrue(sql.contains("topic LIKE"));
+        assertTrue(sql.contains("status =")); assertTrue(sql.contains("ORDER BY create_time DESC,id DESC"));
+        assertFalse(sql.contains("DROP"));
+        assertTrue(wrapper.getValue().getParamNameValuePairs().containsValue(42L));
+        assertTrue(wrapper.getValue().getParamNameValuePairs().containsValue("%attention%"));
+        verifyNoInteractions(jobs, cos);
+    }
+
+    @Test
+    void invalidPaginationAndStatusNeverReachDatabase() {
+        var query = new PaperQueryRequest();
+        query.setPageSize(101);
+        assertThrows(BusinessException.class, () -> service.listPapers(query, 42L));
+        query.setPageSize(10); query.setPageNum(0);
+        assertThrows(BusinessException.class, () -> service.listPapers(query, 42L));
+        query.setPageNum(1); query.setStatus("completed");
+        assertThrows(BusinessException.class, () -> service.listPapers(query, 42L));
+        query.setStatus(null); query.setTitle("a".repeat(256));
+        assertThrows(BusinessException.class, () -> service.listPapers(query, 42L));
+        assertThrows(BusinessException.class, () -> service.listPapers(null, 42L));
+        assertThrows(BusinessException.class, () -> service.listPapers(new PaperQueryRequest(), null));
+        verifyNoInteractions(papers, jobs, cos);
+    }
+
+    @Test
+    void missingOrForeignPaperIsHiddenBeforeAnyJobQuery() {
+        assertEquals(ErrorCode.NOT_FOUND_ERROR.getCode(),
+                assertThrows(BusinessException.class, () -> service.getPaper(100L, 99L)).getCode());
+        var query = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(papers).selectOne(query.capture());
+        assertTrue(query.getValue().getSqlSegment().contains("user_id"));
+        assertTrue(query.getValue().getParamNameValuePairs().containsValue(99L));
+        assertThrows(BusinessException.class, () -> service.getPaper(0L, 42L));
+        assertThrows(BusinessException.class, () -> service.getPaper(100L, null));
+        verifyNoInteractions(jobs, cos);
+    }
+
+    @Test
+    void detailReportsLatestFailureButKeepsCompatibleOldIndexAvailable() {
+        Paper paper = new Paper(); paper.setId(100L); paper.setTitle("论文");
+        paper.setAbstractText("摘要"); paper.setPageCount(8); paper.setStatus("ready");
+        paper.setActiveIndexVersion(1); paper.setActiveIndexAttempt("attempt");
+        when(papers.selectOne(any())).thenReturn(paper);
+        PaperProcessingJob latest = new PaperProcessingJob(); latest.setId(201L); latest.setIndexVersion(2);
+        latest.setStatus("failed"); latest.setErrorCode("PARSE_FAILED"); latest.setErrorMessage("解析失败");
+        PaperProcessingJob active = new PaperProcessingJob(); active.setIndexVersion(1); active.setStatus("completed");
+        active.setEmbeddingModel(config.getEmbeddingModel()); active.setEmbeddingVersion(config.getEmbeddingVersion());
+        active.setEmbeddingDimension(config.getEmbeddingDimension());
+        when(jobs.selectOne(any())).thenReturn(latest, active);
+        var result = service.getPaper(100L, 42L);
+        assertTrue(result.isCanAsk()); assertEquals("摘要", result.getAbstractText());
+        assertEquals(8, result.getPageCount()); assertEquals(201L, result.getJobId());
+        assertEquals("PARSE_FAILED", result.getErrorCode()); assertEquals("解析失败", result.getErrorMessage());
+
+        active.setEmbeddingDimension(1);
+        when(jobs.selectOne(any())).thenReturn(latest, active);
+        assertFalse(service.getPaper(100L, 42L).isCanAsk());
+    }
+
+    @Test
+    void uploadedPaperWithoutTaskOrActiveIndexCannotAnswer() {
+        Paper paper = new Paper(); paper.setId(100L); paper.setStatus("uploaded");
+        when(papers.selectOne(any())).thenReturn(paper);
+        var result = service.getPaper(100L, 42L);
+        assertFalse(result.isCanAsk()); assertNull(result.getErrorMessage()); assertNull(result.getJobId());
+    }
 
     @BeforeEach
     void setUp() {

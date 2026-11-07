@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperAddRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperQueryRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperUpdateRequest;
+import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperScopeRequest;
+import com.ecnu.agentpapermate.entity.vo.sessionPaper.SessionPaperScopeVO;
 
 /**
  * <p>
@@ -16,6 +18,9 @@ import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperUpdateRequest
  * @since 2026-11-06
  */
 public interface SessionPaperService extends IService<SessionPaper> {
+    /** 校验范围版本后在同一事务中替换完整论文集合。 */
+    SessionPaperScopeVO updateScope(SessionPaperScopeRequest request, Long userId);
+
     /** 添加或恢复论文关联，重复添加保持幂等。 */
     Long addSessionPaper(SessionPaperAddRequest request, Long userId);
 

@@ -30,7 +30,12 @@ class AgentPaperMateApplicationTests {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.paths['/agentRun/add'].post").exists())
                 .andExpect(jsonPath("$.paths['/agentRun/cancel'].post").exists())
-                .andExpect(jsonPath("$.paths['/agentRun/events'].get").exists());
+                .andExpect(jsonPath("$.paths['/agentRun/events'].get").exists())
+                .andExpect(jsonPath("$.paths['/paper/list/page'].post").exists())
+                .andExpect(jsonPath("$.paths['/paper/get'].get").exists())
+                .andExpect(jsonPath("$.paths['/paper/file'].get").exists())
+                .andExpect(jsonPath("$.paths['/paperProcessingJob/get'].get").exists())
+                .andExpect(jsonPath("$.paths['/sessionPaper/updateScope'].post").exists());
     }
 
     @Test

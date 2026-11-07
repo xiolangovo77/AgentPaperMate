@@ -9,6 +9,7 @@ import com.qcloud.cos.model.COSObjectInputStream;
 import com.qcloud.cos.model.ObjectMetadata;
 import com.qcloud.cos.model.PutObjectRequest;
 import com.qcloud.cos.model.PutObjectResult;
+import com.qcloud.cos.model.GetObjectRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -32,6 +33,44 @@ class CosManagerTest {
     private static final String URL = "https://files.example.com/" + KEY;
     private COSClient client;
     private CosManager manager;
+
+    @Test
+    void metadataRequiresOwnedCanonicalObjectWithoutDownloadingContent() {
+        ObjectMetadata metadata = new ObjectMetadata(); metadata.setContentLength(10);
+        metadata.addUserMetadata("owner-id", "42");
+        when(client.getObjectMetadata("test-bucket", KEY)).thenReturn(metadata);
+        assertSame(metadata, manager.getPaperMetadata(URL, 42L));
+        assertThrows(BusinessException.class, () -> manager.getPaperMetadata(URL, 99L));
+        assertThrows(BusinessException.class, () -> manager.getPaperMetadata("http://localhost/private", 42L));
+        verify(client, never()).getObject(any(GetObjectRequest.class));
+    }
+
+    @Test
+    void rangeIsSentToCosWithObjectVersionConstraint() throws Exception {
+        COSObject object = new COSObject(); ObjectMetadata metadata = new ObjectMetadata();
+        metadata.addUserMetadata("owner-id", "42"); object.setObjectMetadata(metadata);
+        object.setObjectContent(new ByteArrayInputStream(new byte[4]));
+        when(client.getObject(any(GetObjectRequest.class))).thenReturn(object);
+        try (COSObject returned = manager.openPaperRange(URL, 42L, 3, 6, "etag")) {
+            assertSame(object, returned);
+        }
+        var request = ArgumentCaptor.forClass(GetObjectRequest.class);
+        verify(client).getObject(request.capture());
+        assertEquals(KEY, request.getValue().getKey());
+        assertArrayEquals(new long[]{3, 6}, request.getValue().getRange());
+        assertEquals(java.util.List.of("etag"), request.getValue().getMatchingETagConstraints());
+    }
+
+    @Test
+    void unauthorizedRangeClosesObjectBeforeReturningAnyBytes() {
+        COSObject object = spy(new COSObject()); ObjectMetadata metadata = new ObjectMetadata();
+        metadata.addUserMetadata("owner-id", "99"); object.setObjectMetadata(metadata);
+        ClosingStream stream = new ClosingStream(new byte[4]); object.setObjectContent(stream);
+        when(client.getObject(any(GetObjectRequest.class))).thenReturn(object);
+        assertEquals(ErrorCode.NO_AUTH_ERROR.getCode(), assertThrows(BusinessException.class,
+                () -> manager.openPaperRange(URL, 42L, 0, 3, "etag")).getCode());
+        assertTrue(stream.closed); assertEquals(4, stream.available());
+    }
 
     @BeforeEach
     void setUp() {

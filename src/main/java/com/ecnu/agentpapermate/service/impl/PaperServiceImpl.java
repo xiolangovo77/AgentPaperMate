@@ -22,6 +22,14 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import org.springframework.beans.BeanUtils;
+import org.springframework.util.StringUtils;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ecnu.agentpapermate.entity.dto.paper.PaperQueryRequest;
+import com.ecnu.agentpapermate.entity.vo.paper.PaperSummaryVO;
+import com.ecnu.agentpapermate.entity.vo.paper.PaperDetailVO;
 
 /**
  * <p>
@@ -64,6 +72,82 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
      * 数据库事务模板，确保论文和任务同时保存。
      */
     private final TransactionTemplate transactionTemplate;
+
+    @Override
+    public Page<PaperSummaryVO> listPapers(PaperQueryRequest request, Long userId) {
+        //1、校验登录态、分页边界及筛选条件，不接受客户端指定的排序字段
+        ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
+        ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
+        ThrowUtils.throwIf(request.getPageNum() < 1 || request.getPageSize() < 1 || request.getPageSize() > 100,
+                ErrorCode.PARAMS_ERROR, "页码至少为1，每页数量为1至100");
+        String title = keyword(request.getTitle());
+        String authors = keyword(request.getAuthors());
+        String topic = keyword(request.getTopic());
+        String status = keyword(request.getStatus());
+        ThrowUtils.throwIf(status != null && !Set.of("uploaded", "processing", "ready", "failed").contains(status),
+                ErrorCode.PARAMS_ERROR, "论文状态不合法");
+
+        //2、只查询本人未删除的论文，所有筛选条件以 AND 组合，固定排序避免翻页漂移
+        var query = new QueryWrapper<Paper>().eq("user_id", userId)
+                .like(title != null, "title", title).like(authors != null, "authors", authors)
+                .like(topic != null, "topic", topic).eq(status != null, "status", status)
+                .orderByDesc("create_time", "id");
+        Page<Paper> page = paperMapper.selectPage(new Page<>(request.getPageNum(), request.getPageSize()), query);
+
+        //3、映射安全展示字段并保留总记录数，存储地址和执行令牌不返回客户端
+        Page<PaperSummaryVO> result = new Page<>(page.getCurrent(), page.getSize(), page.getTotal());
+        result.setRecords(page.getRecords().stream().map(paper -> {
+            PaperSummaryVO view = new PaperSummaryVO();
+            BeanUtils.copyProperties(paper, view);
+            return view;
+        }).toList());
+        return result;
+    }
+
+    @Override
+    public PaperDetailVO getPaper(Long id, Long userId) {
+        //1、校验论文归属，只向所有者返回论文详情
+        Paper paper = requireOwnedPaper(id, userId);
+        PaperDetailVO result = new PaperDetailVO();
+        BeanUtils.copyProperties(paper, result);
+
+        //2、最新处理任务提供失败原因；重建索引失败时仍可保留旧版本的问答能力
+        PaperProcessingJob latest = jobMapper.selectOne(new QueryWrapper<PaperProcessingJob>()
+                .eq("paper_id", id).orderByDesc("index_version", "id").last("LIMIT 1"));
+        if (latest != null) {
+            result.setJobId(latest.getId());
+            result.setErrorCode(latest.getErrorCode());
+            result.setErrorMessage(latest.getErrorMessage());
+        }
+
+        //3、与问答创建流程保持一致，检查有效索引、执行令牌和当前向量模型兼容性
+        if (paper.getActiveIndexVersion() != null && paper.getActiveIndexAttempt() != null) {
+            PaperProcessingJob active = latest != null && Objects.equals(latest.getIndexVersion(), paper.getActiveIndexVersion())
+                    ? latest : jobMapper.selectOne(new QueryWrapper<PaperProcessingJob>()
+                    .eq("paper_id", id).eq("index_version", paper.getActiveIndexVersion()).eq("status", "completed"));
+            result.setCanAsk(active != null && "completed".equals(active.getStatus())
+                    && Objects.equals(active.getEmbeddingModel(), processingProperties.getEmbeddingModel())
+                    && Objects.equals(active.getEmbeddingVersion(), processingProperties.getEmbeddingVersion())
+                    && Objects.equals(active.getEmbeddingDimension(), processingProperties.getEmbeddingDimension()));
+        }
+        return result;
+    }
+
+    @Override
+    public Paper requireOwnedPaper(Long id, Long userId) {
+        //1、在读取任务或文件前校验登录态、论文 ID 和归属，逻辑删除由 MyBatis-Plus 过滤
+        ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
+        ThrowUtils.throwIf(id == null || id <= 0, ErrorCode.PARAMS_ERROR, "论文ID不合法");
+        Paper paper = paperMapper.selectOne(new QueryWrapper<Paper>().eq("id", id).eq("user_id", userId));
+        ThrowUtils.throwIf(paper == null, ErrorCode.NOT_FOUND_ERROR, "论文不存在或无权访问");
+        return paper;
+    }
+
+    private String keyword(String value) {
+        //1、空白条件视为未筛选，限制搜索文本长度
+        ThrowUtils.throwIf(value != null && value.length() > 255, ErrorCode.PARAMS_ERROR, "筛选条件不能超过255个字符");
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
 
     /**
      * 保存论文，并在同一事务内创建处理任务。

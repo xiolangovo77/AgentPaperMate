@@ -12,6 +12,16 @@ import com.ecnu.agentpapermate.service.AppUserService;
 import com.ecnu.agentpapermate.service.PaperService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ecnu.agentpapermate.entity.dto.paper.PaperQueryRequest;
+import com.ecnu.agentpapermate.entity.vo.paper.PaperSummaryVO;
+import com.ecnu.agentpapermate.entity.vo.paper.PaperDetailVO;
+import com.ecnu.agentpapermate.service.PaperFileService;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
 
 /**
  * <p>
@@ -35,6 +45,37 @@ public class PaperController {
      * 用户服务，用于获取当前登录用户。
      */
     private final AppUserService appUserService;
+
+    /**
+     * 论文文件服务，校验访问权限并输出完整 PDF 或指定字节范围。
+     */
+    private final PaperFileService paperFileService;
+
+    @PostMapping("/list/page")
+    public BaseResponse<Page<PaperSummaryVO>> listPage(@RequestBody PaperQueryRequest body, HttpServletRequest request) {
+        //1、从登录态读取用户身份，分页查询本人论文
+        Long userId = appUserService.getLoginUser(request).getId();
+        //2、统一包装分页记录与总数
+        return ResultUtils.success(paperService.listPapers(body, userId));
+    }
+
+    @GetMapping("/get")
+    public BaseResponse<PaperDetailVO> get(@RequestParam Long id, HttpServletRequest request) {
+        //1、从登录态读取用户身份并校验论文访问权限
+        Long userId = appUserService.getLoginUser(request).getId();
+        //2、返回论文详情、问答可用性及处理错误
+        return ResultUtils.success(paperService.getPaper(id, userId));
+    }
+
+    @GetMapping("/file")
+    public void file(@RequestParam Long id, @RequestHeader(value = "Range", required = false) String range,
+                     @RequestHeader(value = "If-Range", required = false) String ifRange,
+                     HttpServletRequest request, HttpServletResponse response) throws IOException {
+        //1、读取登录用户，未登录请求不能进入存储读取流程
+        Long userId = appUserService.getLoginUser(request).getId();
+        //2、直接输出文件流及 HTTP 范围响应头，不包装为 JSON
+        paperFileService.writeFile(id, userId, range, ifRange, response);
+    }
 
     /**
      * 保存论文并创建等待执行的入库任务。

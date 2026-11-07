@@ -17,6 +17,8 @@ import com.ecnu.agentpapermate.service.AppUserService;
 import com.ecnu.agentpapermate.service.SessionPaperService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperScopeRequest;
+import com.ecnu.agentpapermate.entity.vo.sessionPaper.SessionPaperScopeVO;
 
 /**
  * <p>
@@ -31,8 +33,24 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SessionPaperController {
 
+    /**
+     * 会话论文服务，负责关联变更、范围版本校验及事务内整体替换。
+     */
     private final SessionPaperService sessionPaperService;
+    /**
+     * 用户服务，读取当前登录用户身份。
+     */
     private final AppUserService appUserService;
+
+    /** 一次提交完整论文范围，返回最新集合和版本。 */
+    @PostMapping("/updateScope")
+    public BaseResponse<SessionPaperScopeVO> updateScope(@RequestBody SessionPaperScopeRequest body,
+                                                        HttpServletRequest request) {
+        //1、从登录态取得当前用户，避免客户端伪造归属
+        Long userId = appUserService.getLoginUser(request).getId();
+        //2、事务替换完整论文范围并返回最新版本
+        return ResultUtils.success(sessionPaperService.updateScope(body, userId));
+    }
 
     /** 添加或恢复论文关联，返回关联ID。 */
     @PostMapping("/add")

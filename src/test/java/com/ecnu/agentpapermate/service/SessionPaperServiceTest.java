@@ -5,6 +5,9 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperAddRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperQueryRequest;
 import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperUpdateRequest;
+import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperScopeRequest;
+import java.util.List;
+import java.util.Arrays;
 import com.ecnu.agentpapermate.entity.model.ChatSession;
 import com.ecnu.agentpapermate.entity.model.Paper;
 import com.ecnu.agentpapermate.entity.model.SessionPaper;
@@ -42,6 +45,97 @@ class SessionPaperServiceTest {
     private final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     private final SimpleTransactionStatus txStatus = new SimpleTransactionStatus();
     private SessionPaperService service;
+
+    @Test
+    void replacesFullScopeRestoresRemovedRecordsAndRecordsOneVersionAndMessage() throws Exception {
+        SessionPaper removed = relation((byte) 1); removed.setPaperId(201L); removed.setId(301L);
+        when(relations.selectPairForUpdate(100L, 201L)).thenReturn(removed);
+        var result = service.updateScope(scopeRequest(List.of(202L, 201L, 201L), 1), 42L);
+        assertEquals(List.of(201L, 202L), result.getPaperIds()); assertEquals(2, result.getScopeVersion());
+        assertEquals(100L, result.getSessionId());
+        verify(relations).updateMembership(300L, (byte) 1);
+        verify(relations).updateMembership(301L, (byte) 0);
+        var insert = ArgumentCaptor.forClass(SessionPaper.class);
+        verify(relations).insert(insert.capture());
+        assertEquals(202L, insert.getValue().getPaperId()); assertEquals(100L, insert.getValue().getSessionId());
+        verify(sessions).incrementScopeVersion(100L, 42L);
+        var message = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messages).insert(message.capture());
+        var data = new ObjectMapper().readTree(message.getValue().getExtraData());
+        assertEquals("[200]", data.get("beforePaperIds").toString());
+        assertEquals("[201,202]", data.get("afterPaperIds").toString());
+        assertEquals(2, data.get("scopeVersion").asInt()); assertNull(message.getValue().getRunId());
+        var order = inOrder(chatService, relations, sessions, messages, transactions);
+        order.verify(chatService).lockSession(100L, 42L);
+        order.verify(relations).updateMembership(300L, (byte) 1);
+        order.verify(sessions).incrementScopeVersion(100L, 42L);
+        order.verify(messages).insert(any(ChatMessage.class));
+        order.verify(transactions).commit(txStatus);
+    }
+
+    @Test
+    void unchangedScopeAndDuplicateIdsDoNotAdvanceVersionOrWriteMessage() {
+        var result = service.updateScope(scopeRequest(List.of(200L, 200L), 1), 42L);
+        assertEquals(1, result.getScopeVersion()); assertEquals(List.of(200L), result.getPaperIds());
+        verify(relations, never()).insert(any(SessionPaper.class));
+        verify(relations, never()).updateMembership(anyLong(), anyByte());
+        verifyNoInteractions(sessions, messages);
+    }
+
+    @Test
+    void emptyScopeClearsAllRelationsButNullScopeIsRejected() {
+        var result = service.updateScope(scopeRequest(List.of(), 1), 42L);
+        assertEquals(List.of(), result.getPaperIds()); assertEquals(2, result.getScopeVersion());
+        verify(relations).updateMembership(300L, (byte) 1);
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(null, 1), 42L));
+    }
+
+    @Test
+    void staleVersionIsRejectedBeforePaperQueriesAndAnyWrites() {
+        var error = assertThrows(BusinessException.class,
+                () -> service.updateScope(scopeRequest(List.of(200L), 0), 42L));
+        assertEquals(ErrorCode.CONFLICT_ERROR.getCode(), error.getCode());
+        verifyNoInteractions(papers, relations, sessions, messages);
+        verify(transactions).rollback(txStatus);
+    }
+
+    @Test
+    void validatesWholeTargetScopeBeforeRemovingAnyCurrentPaper() {
+        when(papers.selectOne(any())).thenReturn(new Paper()).thenReturn(null);
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(201L, 202L), 1), 42L));
+        verifyNoInteractions(relations, sessions, messages);
+        verify(transactions).rollback(txStatus);
+    }
+
+    @Test
+    void scopeMessageFailureRollsBackFullReplacementAndVersion() {
+        when(messages.insert(any(ChatMessage.class))).thenReturn(0);
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(201L), 1), 42L));
+        verify(relations).updateMembership(300L, (byte) 1);
+        verify(relations).insert(any(SessionPaper.class));
+        verify(sessions).incrementScopeVersion(100L, 42L);
+        verify(transactions).rollback(txStatus);
+        verify(transactions, never()).commit(any());
+    }
+
+    @Test
+    void rejectsMalformedScopeAndForeignSession() {
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(0L), 1), 42L));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(Arrays.asList(200L, null), 1), 42L));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(), null), 42L));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(), -1), 42L));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(java.util.Collections.nCopies(101, 200L), 1), 42L));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(), 1), null));
+        when(chatService.lockSession(100L, 99L)).thenThrow(new BusinessException(ErrorCode.NOT_FOUND_ERROR));
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(200L), 1), 99L));
+        verifyNoInteractions(relations, sessions, papers, messages);
+    }
+
+    private SessionPaperScopeRequest scopeRequest(List<Long> ids, Integer version) {
+        var request = new SessionPaperScopeRequest();
+        request.setSessionId(100L); request.setPaperIds(ids); request.setScopeVersion(version);
+        return request;
+    }
 
     @BeforeEach
     void setUp() {

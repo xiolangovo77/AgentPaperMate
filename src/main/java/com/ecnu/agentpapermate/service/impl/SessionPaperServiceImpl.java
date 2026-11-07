@@ -17,6 +17,11 @@ import com.ecnu.agentpapermate.mapper.ChatMessageMapper;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.List;
+import java.util.TreeSet;
+import java.util.Objects;
+import com.ecnu.agentpapermate.entity.dto.sessionPaper.SessionPaperScopeRequest;
+import com.ecnu.agentpapermate.entity.vo.sessionPaper.SessionPaperScopeVO;
 import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.exception.ThrowUtils;
@@ -63,6 +68,72 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
      * JSON 转换工具，用于保存资料变更前后论文集合、范围版本等补充信息。
      */
     private final RagJson ragJson;
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public SessionPaperScopeVO updateScope(SessionPaperScopeRequest request, Long userId) {
+        //1、校验完整集合和版本，null 不代表清空；限制单次输入，避免长时间持有会话锁
+        ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
+        ThrowUtils.throwIf(request == null || request.getPaperIds() == null || request.getScopeVersion() == null,
+                ErrorCode.PARAMS_ERROR, "sessionId、paperIds和scopeVersion不能为空");
+        ThrowUtils.throwIf(request.getScopeVersion() < 0 || request.getPaperIds().size() > 100,
+                ErrorCode.PARAMS_ERROR, "范围版本不能为负数，单次最多提交100个论文ID");
+        request.getPaperIds().forEach(this::validateId);
+        List<Long> after = new ArrayList<>(new TreeSet<>(request.getPaperIds()));
+
+        //2、先锁定本人会话再检查版本，和单篇添加、移除及问答快照使用相同的锁顺序
+        ChatSession session = chatSessionService.lockSession(request.getSessionId(), userId);
+        ThrowUtils.throwIf(!Objects.equals(request.getScopeVersion(), session.getScopeVersion()),
+                ErrorCode.CONFLICT_ERROR, "论文范围已变化，请刷新范围和版本后重试");
+        after.forEach(id -> requireOwnedPaper(id, userId));
+        List<SessionPaper> current = sessionPaperMapper.selectList(new QueryWrapper<SessionPaper>()
+                .eq("session_id", session.getId()).orderByAsc("paper_id"));
+        List<Long> before = current.stream().map(SessionPaper::getPaperId).sorted().toList();
+        int version = session.getScopeVersion();
+
+        //3、只在集合实际变化时移出、恢复或新增关联，失败时整体回滚
+        if (!before.equals(after)) {
+            ThrowUtils.throwIf(version == Integer.MAX_VALUE, ErrorCode.CONFLICT_ERROR, "论文范围版本已达上限");
+            for (SessionPaper relation : current) {
+                if (!after.contains(relation.getPaperId())) {
+                    requireChanged(sessionPaperMapper.updateMembership(relation.getId(), (byte) 1));
+                }
+            }
+            for (Long paperId : after) {
+                if (before.contains(paperId)) continue;
+                SessionPaper existing = sessionPaperMapper.selectPairForUpdate(session.getId(), paperId);
+                if (existing != null) {
+                    requireChanged(sessionPaperMapper.updateMembership(existing.getId(), (byte) 0));
+                } else {
+                    SessionPaper relation = new SessionPaper();
+                    relation.setSessionId(session.getId());
+                    relation.setPaperId(paperId);
+                    relation.setIsDelete((byte) 0);
+                    requireChanged(sessionPaperMapper.insert(relation));
+                }
+            }
+
+            //4、一次替换只递增一次版本并写一条系统消息，既有问答任务快照保持独立
+            requireChanged(chatSessionMapper.incrementScopeVersion(session.getId(), userId));
+            version++;
+            ChatMessage message = new ChatMessage();
+            message.setSessionId(session.getId());
+            message.setRole("system");
+            message.setMessageType("scope_change");
+            message.setContent("已更新资料范围，共" + after.size() + "篇论文");
+            message.setExtraData(ragJson.write(Map.of("beforePaperIds", before, "afterPaperIds", after,
+                    "scopeVersion", version, "action", "replaced")));
+            message.setIsDelete((byte) 0);
+            requireChanged(chatMessageMapper.insert(message));
+        }
+
+        //5、返回本事务内的完整最新集合与版本，无变化请求不产生额外写入
+        SessionPaperScopeVO result = new SessionPaperScopeVO();
+        result.setSessionId(session.getId());
+        result.setPaperIds(after);
+        result.setScopeVersion(version);
+        return result;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)

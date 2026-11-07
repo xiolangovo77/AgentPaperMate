@@ -9,6 +9,7 @@ import com.ecnu.agentpapermate.exception.ErrorCode;
 import com.ecnu.agentpapermate.exception.ThrowUtils;
 import com.qcloud.cos.model.COSObject;
 import com.qcloud.cos.model.ObjectMetadata;
+import com.qcloud.cos.model.GetObjectRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -100,13 +101,65 @@ public class CosManager {
         return readPaper(fileUrl, userId, destination);
     }
 
-    private PaperFileInfo readPaper(String fileUrl, Long userId, Path destination) {
+    /** 读取可信 COS 元数据，供 PDF 阅读接口确定实际长度和文件版本。 */
+    public ObjectMetadata getPaperMetadata(String fileUrl, Long userId) {
+        //1、仅接受本系统固定对象路径，通过 SDK 查询元数据并复核上传者
+        String key = paperKey(fileUrl);
+        try {
+            ObjectMetadata metadata = cosClient.getObjectMetadata(cosClientConfig.getBucket(), key);
+            verifyOwner(metadata, userId);
+            ThrowUtils.throwIf(metadata.getContentLength() <= 0 || metadata.getContentLength() > PAPER_MAX_SIZE,
+                    ErrorCode.OPERATION_ERROR, "论文文件大小无效");
+            return metadata;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "读取论文文件信息失败，请稍后重试");
+        }
+    }
+
+    /** 打开指定字节区间，调用方必须关闭对象；ETag 防止元数据读取后文件被替换。 */
+    public COSObject openPaperRange(String fileUrl, Long userId, long start, long end, String etag) {
+        //1、将读取范围下推到 COS，不下载整篇文件，也不向客户端暴露存储 URL
+        String key = paperKey(fileUrl);
+        COSObject object = null;
+        try {
+            GetObjectRequest request = new GetObjectRequest(cosClientConfig.getBucket(), key);
+            request.setRange(start, end);
+            if (etag != null && !etag.isBlank()) request.setMatchingETagConstraints(java.util.List.of(etag));
+            object = cosClient.getObject(request);
+            verifyOwner(object.getObjectMetadata(), userId);
+            return object;
+        } catch (RuntimeException e) {
+            //2、校验失败也关闭已打开的对象，避免连接泄漏
+            if (object != null) {
+                try { object.close(); } catch (java.io.IOException closeError) { e.addSuppressed(closeError); }
+            }
+            if (e instanceof BusinessException business) throw business;
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "读取论文文件失败，请稍后重试");
+        }
+    }
+
+    private void verifyOwner(ObjectMetadata metadata, Long userId) {
+        //1、文件所属用户必须与已认证用户一致
+        ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
+        ThrowUtils.throwIf(!userId.toString().equals(metadata.getUserMetaDataOf(OWNER_ID)),
+                ErrorCode.NO_AUTH_ERROR, "文件不属于当前用户或缺少上传信息，请重新上传");
+    }
+
+    private String paperKey(String fileUrl) {
+        //1、限定配置的域名与论文目录，拒绝任意 URL、路径穿越及临时签名参数
         String prefix = cosClientConfig.getHost().replaceAll("/+$", "") + "/";
         ThrowUtils.throwIf(fileUrl == null || fileUrl.length() > 2048 || !fileUrl.startsWith(prefix),
                 ErrorCode.PARAMS_ERROR, "请使用本系统上传后返回的固定文件URL");
         String key = fileUrl.substring(prefix.length());
         ThrowUtils.throwIf(!key.matches("papers/\\d{4}/\\d{2}/\\d{2}/[a-f0-9]{32}\\.pdf"),
                 ErrorCode.PARAMS_ERROR, "论文文件URL格式不正确，不允许临时签名或其他路径");
+        return key;
+    }
+
+    private PaperFileInfo readPaper(String fileUrl, Long userId, Path destination) {
+        String key = paperKey(fileUrl);
         try (COSObject object = cosClient.getObject(cosClientConfig.getBucket(), key);
              OutputStream output = destination == null ? OutputStream.nullOutputStream() : Files.newOutputStream(destination)) {
             ObjectMetadata metadata = object.getObjectMetadata();

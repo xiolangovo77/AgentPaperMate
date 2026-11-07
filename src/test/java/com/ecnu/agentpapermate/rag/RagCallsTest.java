@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.rag;
 
+import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import org.junit.jupiter.api.Test;

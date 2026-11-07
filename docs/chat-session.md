@@ -10,6 +10,7 @@ Long ID 按项目 JSON 配置返回字符串。
 | GET | `/chatSession/get` | `?id=聊天室ID` |
 | POST | `/chatSession/list/page` | `{"pageNum":1,"pageSize":10,"name":"研究"}`；name 可选 |
 | POST | `/chatSession/update` | `{"id":"聊天室ID","name":"新名称","inputDraft":""}` |
+| POST | `/chatSession/delete` | `{"id":"聊天室ID"}`；成功返回 `true` |
 | POST | `/sessionPaper/add` | `{"sessionId":"聊天室ID","paperId":"论文ID"}` |
 | GET | `/sessionPaper/get` | `?id=关联ID` |
 | POST | `/sessionPaper/list/page` | `{"sessionId":"聊天室ID","pageNum":1,"pageSize":10}`；paperId 可选 |
@@ -22,9 +23,12 @@ Long ID 按项目 JSON 配置返回字符串。
 - 添加已存在的有效关联直接返回原ID。添加已移出的论文恢复原记录，保留ID和首次创建时间；修改关联不能更换聊天室或论文ID。
 - 论文关联新增、移出、恢复仅在集合实际变化时递增 `scope_version`，更新 `last_message_time`，并插入 `role=system`、`message_type=scope_change` 的消息。消息不关联 Run，记录变更前后论文 ID、范围版本和操作。重复添加、重复移出、重复恢复不改变版本、活动时间或消息。
 - 关联变更与聊天室版本更新处于同一事务，通过先锁聊天室、再锁关联串行处理同一聊天室的并发修改。时间使用数据库当前时间，沿用项目连接的上海时区配置。
+- 删除聊天室时先在事务内锁定当前用户的有效会话，仅 `active_run_id IS NULL` 才允许删除；有活动任务返回 `CONFLICT_ERROR`，不存在、已删除或不属于当前用户均返回 `NOT_FOUND_ERROR`。ID 必须为正数。
+- 删除将 `chat_session`、`session_paper`、`agent_run`、`chat_message`、`message_citation`、`run_event` 的有效记录标记为 `is_delete=1` 并更新时间；涵盖资料变更消息，以及已删除消息或任务下残留的引用、事件。任一步异常整体回滚，空会话可以直接删除。
+- 会话删除保留论文、阅读笔记、论文处理任务、COS 文件及 ES 索引，不影响其他会话使用同一论文；不新增资料变更消息，也不修改论文范围版本。
 
 针对本模块的离线测试：
 
 ```shell
-mvn -o -Dtest=ChatSessionServiceTest,SessionPaperServiceTest,ChatSessionMapperConfigurationTest test
+mvn -o -Dtest=ChatSessionServiceTest,ChatSessionDeletionTest,ChatSessionControllerTest,SessionPaperServiceTest,ChatSessionMapperConfigurationTest test
 ```

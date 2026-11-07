@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.rag;
 
+import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;

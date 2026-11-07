@@ -8,7 +8,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ecnu.agentpapermate.common.BaseResponse;
+import com.ecnu.agentpapermate.common.DeleteRequest;
 import com.ecnu.agentpapermate.common.ResultUtils;
+import com.ecnu.agentpapermate.exception.ErrorCode;
+import com.ecnu.agentpapermate.exception.ThrowUtils;
 import com.ecnu.agentpapermate.entity.dto.chatSession.ChatSessionAddRequest;
 import com.ecnu.agentpapermate.entity.dto.chatSession.ChatSessionQueryRequest;
 import com.ecnu.agentpapermate.entity.dto.chatSession.ChatSessionUpdateRequest;
@@ -57,5 +60,13 @@ public class ChatSessionController {
     @PostMapping("/update")
     public BaseResponse<Boolean> update(@RequestBody ChatSessionUpdateRequest body, HttpServletRequest request) {
         return ResultUtils.success(chatSessionService.updateSession(body, appUserService.getLoginUser(request).getId()));
+    }
+
+    /** 逻辑删除无活动任务的聊天室及其关联数据。 */
+    @PostMapping("/delete")
+    public BaseResponse<Boolean> delete(@RequestBody DeleteRequest body, HttpServletRequest request) {
+        Long userId = appUserService.getLoginUser(request).getId();
+        ThrowUtils.throwIf(body == null, ErrorCode.PARAMS_ERROR);
+        return ResultUtils.success(chatSessionService.deleteSession(body.getId(), userId));
     }
 }

@@ -39,4 +39,42 @@
         SET active_run_id = NULL, last_message_time = CURRENT_TIMESTAMP(3)
         WHERE id = #{sessionId} AND active_run_id = #{runId} AND is_delete = 0
     </update>
+    <!-- 父记录不按 is_delete 过滤，以覆盖已删除消息或任务下残留的子记录。 -->
+    <update id="logicalDeleteCitations">
+        UPDATE message_citation
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE is_delete = 0
+          AND message_id IN (SELECT id FROM chat_message WHERE session_id = #{sessionId})
+    </update>
+
+    <update id="logicalDeleteRunEvents">
+        UPDATE run_event
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE is_delete = 0
+          AND run_id IN (SELECT id FROM agent_run WHERE session_id = #{sessionId})
+    </update>
+
+    <update id="logicalDeleteMessages">
+        UPDATE chat_message
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE session_id = #{sessionId} AND is_delete = 0
+    </update>
+
+    <update id="logicalDeleteRuns">
+        UPDATE agent_run
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE session_id = #{sessionId} AND is_delete = 0
+    </update>
+
+    <update id="logicalDeleteSessionPapers">
+        UPDATE session_paper
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE session_id = #{sessionId} AND is_delete = 0
+    </update>
+
+    <update id="logicalDeleteIdleSession">
+        UPDATE chat_session
+        SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)
+        WHERE id = #{id} AND user_id = #{userId} AND is_delete = 0 AND active_run_id IS NULL
+    </update>
 </mapper>

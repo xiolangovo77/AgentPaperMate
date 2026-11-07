@@ -26,4 +26,23 @@ public interface ChatSessionMapper extends BaseMapper<ChatSession> {
 
     /** 仅释放仍属于当前 Run 的会话占用，防止清除其他任务。 */
     int releaseActiveRun(@Param("sessionId") Long sessionId, @Param("runId") Long runId);
+
+    // 以下批量删除仅供会话删除事务调用，调用方必须持有已校验归属的会话锁。
+    /** 删除会话全部消息的引用，包括已删除消息下残留的引用。 */
+    int logicalDeleteCitations(@Param("sessionId") Long sessionId);
+
+    /** 删除会话全部任务的事件，包括已删除任务下残留的事件。 */
+    int logicalDeleteRunEvents(@Param("sessionId") Long sessionId);
+
+    /** 删除会话消息，包含不关联 Run 的资料变更消息。 */
+    int logicalDeleteMessages(@Param("sessionId") Long sessionId);
+
+    /** 删除会话任务历史。 */
+    int logicalDeleteRuns(@Param("sessionId") Long sessionId);
+
+    /** 删除会话论文关联，保留论文。 */
+    int logicalDeleteSessionPapers(@Param("sessionId") Long sessionId);
+
+    /** 删除当前用户没有活动任务的有效会话。 */
+    int logicalDeleteIdleSession(@Param("id") Long id, @Param("userId") Long userId);
 }

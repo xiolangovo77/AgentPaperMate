@@ -38,5 +38,28 @@ class ChatSessionMapperConfigurationTest {
                 .getBoundSql(Map.of("id", 1L, "userId", 2L)).getSql();
         assertTrue(lock.contains("user_id ="));
         assertTrue(lock.contains("FOR UPDATE"));
+
+        for (String method : new String[]{"logicalDeleteCitations", "logicalDeleteRunEvents", "logicalDeleteMessages",
+                "logicalDeleteRuns", "logicalDeleteSessionPapers", "logicalDeleteIdleSession"}) {
+            var bound = configuration.getMappedStatement(chat + method)
+                    .getBoundSql(Map.of("sessionId", 1L, "id", 1L, "userId", 2L));
+            String sql = bound.getSql().replaceAll("\\s+", " ");
+            assertTrue(sql.startsWith("UPDATE "), method);
+            assertTrue(sql.contains("SET is_delete = 1, update_time = CURRENT_TIMESTAMP(3)"), method);
+            assertTrue(sql.contains("is_delete = 0"), method);
+            if (method.equals("logicalDeleteIdleSession")) {
+                assertTrue(sql.contains("id = ? AND user_id = ?"));
+                assertTrue(sql.contains("active_run_id IS NULL"));
+            } else {
+                assertTrue(sql.contains("session_id = ?"), method);
+                assertEquals("sessionId", bound.getParameterMappings().getFirst().getProperty());
+            }
+            if (method.equals("logicalDeleteCitations")) {
+                assertTrue(sql.contains("message_id IN (SELECT id FROM chat_message WHERE session_id = ?)"));
+            }
+            if (method.equals("logicalDeleteRunEvents")) {
+                assertTrue(sql.contains("run_id IN (SELECT id FROM agent_run WHERE session_id = ?)"));
+            }
+        }
     }
 }

@@ -127,6 +127,27 @@ public class ChatSessionServiceImpl extends ServiceImpl<ChatSessionMapper, ChatS
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deleteSession(Long id, Long userId) {
+        //1、与创建 Run、资料变更共用会话锁，在事务内校验归属及活动任务
+        ChatSession session = lockSession(id, userId);
+        ThrowUtils.throwIf(session.getActiveRunId() != null, ErrorCode.CONFLICT_ERROR,
+                "聊天室已有活动问答任务，请等待任务结束后再删除");
+
+        //2、按会话批量逻辑删除子记录；没有关联数据时影响零行是正常情况
+        chatSessionMapper.logicalDeleteCitations(id);
+        chatSessionMapper.logicalDeleteRunEvents(id);
+        chatSessionMapper.logicalDeleteMessages(id);
+        chatSessionMapper.logicalDeleteRuns(id);
+        chatSessionMapper.logicalDeleteSessionPapers(id);
+
+        //3、最后删除会话，条件更新兜底；任何 SQL 异常或会话更新失败都整体回滚
+        ThrowUtils.throwIf(chatSessionMapper.logicalDeleteIdleSession(id, userId) != 1,
+                ErrorCode.OPERATION_ERROR, "删除聊天室失败");
+        return true;
+    }
+
+    @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public ChatSession lockSession(Long id, Long userId) {
         //1、校验登录态和聊天室ID

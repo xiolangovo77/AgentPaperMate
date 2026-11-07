@@ -28,6 +28,9 @@ public interface ChatSessionService extends IService<ChatSession> {
     /** 更新名称或草稿，不改变论文范围版本及最近活动时间。 */
     boolean updateSession(ChatSessionUpdateRequest request, Long userId);
 
+    /** 删除没有活动任务的聊天室及其关联记录，保留论文和阅读笔记。 */
+    boolean deleteSession(Long id, Long userId);
+
     /** 锁定当前用户的聊天室，调用方必须处于事务中。 */
     ChatSession lockSession(Long id, Long userId);
 }

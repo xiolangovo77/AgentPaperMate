@@ -1,5 +1,6 @@
 import { get, post, request } from './request'
 import type { Id, User, Page, Session, SessionPaper, PaperReceipt, Note, NoteContent, Message, Citation, Run, RunCreate, RunEvent } from '../types/api'
+import type { PaperSummary, PaperDetail, PaperQuery, PaperJob, PaperScope } from '../types/api'
 
 export const userApi = {
   current: () => request<User>({ url: '/appUser/get' }, true),
@@ -14,7 +15,12 @@ export function uploadFile(kind: 'paper' | 'avatar', file: File, progress?: (val
   return request<string>({ url: `/common/upload/${kind}`, method: 'POST', data, timeout: 120000,
     onUploadProgress: event => progress?.(event.total ? Math.round(event.loaded / event.total * 100) : null) })
 }
-export const paperApi = { add: (fileUrl: string) => post<PaperReceipt>('/paper/add', { fileUrl }) }
+export const paperApi = {
+  add: (fileUrl: string) => post<PaperReceipt>('/paper/add', { fileUrl }),
+  list: (query: PaperQuery) => post<Page<PaperSummary>>('/paper/list/page', query),
+  get: (id: Id) => get<PaperDetail>('/paper/get', { id }),
+  job: (id: Id) => get<PaperJob>('/paperProcessingJob/get', { id }),
+}
 export const noteApi = {
   get: (paperId: Id) => get<Note | null>('/readingNote/get', { paperId }),
   add: (paperId: Id, content: NoteContent) => post<Id>('/readingNote/add', { paperId, ...content }),
@@ -29,6 +35,7 @@ export const sessionApi = {
   papers: (sessionId: Id, pageNum = 1) => post<Page<SessionPaper>>('/sessionPaper/list/page', { sessionId, pageNum, pageSize: 100 }),
   addPaper: (sessionId: Id, paperId: Id) => post<Id>('/sessionPaper/add', { sessionId, paperId }),
   removePaper: (id: Id) => post<boolean>('/sessionPaper/update', { id, isDelete: 1 }),
+  updateScope: (sessionId: Id, paperIds: Id[], scopeVersion: number) => post<PaperScope>('/sessionPaper/updateScope', { sessionId, paperIds, scopeVersion }),
 }
 export const messageApi = {
   list: (sessionId: Id, pageNum = 1) => get<Page<Message>>('/chatMessage/list/page', { sessionId, pageNum, pageSize: 20 }),

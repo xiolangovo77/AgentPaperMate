@@ -1,30 +1,50 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { FileText, Plus, Trash2 } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { sessionApi } from '../api'
-import { messageOf } from '../api/request'
-import type { SessionPaper } from '../types/api'
-import { validId } from '../utils/format'
+import { ApiError, messageOf } from '../api/request'
+import type { PaperSummary } from '../types/api'
+import { paperDetails, paperTitle, readScope } from '../utils/papers'
 import Modal from './Modal.vue'
 import Feedback from './Feedback.vue'
-import CapabilityGap from './CapabilityGap.vue'
-const props = defineProps<{ sessionId: string; papers: SessionPaper[]; scopeVersion: number }>()
+import PaperBrowser from './PaperBrowser.vue'
+const props = defineProps<{ sessionId: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
-const tab = ref('selected'), query = ref(''), page = ref(1), paperId = ref(''), busy = ref(false), error = ref(''), success = ref('')
-const items = computed(() => props.papers.filter(item => item.paperId.includes(query.value.trim())))
-const pages = computed(() => Math.max(1, Math.ceil(items.value.length / 10)))
-const shown = computed(() => items.value.slice((page.value - 1) * 10, page.value * 10))
-async function add() {
-  if (!validId(paperId.value.trim()) || busy.value) return
-  busy.value = true; error.value = ''; success.value = ''
-  try { await sessionApi.addPaper(props.sessionId, paperId.value.trim()); paperId.value = ''; success.value = '已添加一篇论文。索引就绪状态将在提问时由服务端校验。'; emit('changed') } catch (e) { error.value = messageOf(e) } finally { busy.value = false }
+const selected = ref<string[]>([]), catalog = ref<Record<string, PaperSummary>>({}), version = ref(0)
+const tab = ref('browse'), query = ref(''), page = ref(1), busy = ref(false), loading = ref(true), error = ref(''), conflict = ref(false)
+const initialized = ref(false)
+const chosen = computed(() => selected.value.filter(id => `${id} ${catalog.value[id] ? paperTitle(catalog.value[id]!) : ''}`.toLowerCase().includes(query.value.trim().toLowerCase())))
+const shown = computed(() => chosen.value.slice((page.value - 1) * 10, page.value * 10)), pages = computed(() => Math.max(1, Math.ceil(chosen.value.length / 10)))
+let disposed = false
+function cache(rows: PaperSummary[]) { for (const item of rows) catalog.value[item.id] = item }
+function toggle(paper: PaperSummary) {
+  cache([paper]); error.value = ''
+  if (selected.value.includes(paper.id)) selected.value = selected.value.filter(id => id !== paper.id)
+  else if (selected.value.length < 100) selected.value.push(paper.id)
+  else error.value = '每个资料范围最多选择 100 篇论文。'
 }
-async function remove(item: SessionPaper) {
-  if (busy.value) return
-  busy.value = true; error.value = ''; success.value = ''
-  try { await sessionApi.removePaper(item.id); success.value = '已移出论文，历史回答和引用保留。'; page.value = 1; emit('changed') } catch (e) { error.value = messageOf(e) } finally { busy.value = false }
+async function load() {
+  loading.value = true; error.value = ''
+  initialized.value = false
+  try {
+    const snapshot = await readScope(props.sessionId)
+    if (disposed) return
+    selected.value = snapshot.papers.map(item => item.paperId); version.value = snapshot.session.scopeVersion; conflict.value = false; page.value = 1; initialized.value = true
+    // Failed metadata does not erase an existing membership; it can still be removed.
+    for (let offset = 0; offset < selected.value.length && !disposed; offset += 5) {
+      const results = await Promise.allSettled(selected.value.slice(offset, offset + 5).map(id => paperDetails([id])))
+      if (!disposed) for (const result of results) if (result.status === 'fulfilled') cache(result.value)
+    }
+  } catch (e) { if (!disposed) error.value = messageOf(e) }
+  finally { if (!disposed) loading.value = false }
 }
+async function save() {
+  busy.value = true; error.value = ''
+  try { await sessionApi.updateScope(props.sessionId, selected.value, version.value); emit('changed'); emit('close') }
+  catch (e) { error.value = messageOf(e); conflict.value = e instanceof ApiError && e.conflict }
+  finally { busy.value = false }
+}
+function reload() { if (window.confirm('将重新读取最新资料范围并替换当前未提交选择，请重新确认后保存。是否继续？')) void load() }
+onMounted(load)
+onBeforeUnmount(() => { disposed = true })
 </script>
-<template>
-  <Modal title="聊天室资料范围" :busy="busy" wide @close="emit('close')"><p class="muted">资料范围版本 {{ scopeVersion }} · 调整只影响后续提问，正在执行的任务保留原有资料快照。</p><div class="tabs"><button :class="{ active: tab === 'selected' }" @click="tab = 'selected'">已选论文（{{ papers.length }}）</button><button :class="{ active: tab === 'browse' }" @click="tab = 'browse'">浏览论文库</button></div><Feedback :error="error" /><p v-if="success" class="notice success" role="status">{{ success }}</p><CapabilityGap v-if="tab === 'browse'" title="暂不能浏览论文库" detail="服务尚未提供论文分页查询和批量范围更新能力，因此无法搜索、跨页选择或一次提交完整论文集合。" /><template v-else><input v-model="query" class="field scope-search" placeholder="按论文 ID 筛选已选资料" aria-label="筛选已选资料" @input="page = 1" /><div v-if="!shown.length" class="empty-state">{{ papers.length ? '没有匹配的论文。' : '当前还没有资料。添加后即可开始研究讨论。' }}</div><article v-for="item in shown" :key="item.id" class="scope-record"><FileText :size="20" /><div><b>论文 {{ item.paperId }}</b><small>标题与处理状态暂不可查询</small></div><RouterLink class="btn small" :to="`/library/${item.paperId}?tab=notes`">笔记</RouterLink><button class="btn small" :disabled="busy" @click="remove(item)"><Trash2 :size="12" />移出</button></article><div v-if="pages > 1" class="scope-pagination"><button class="btn small" :disabled="page === 1" @click="page--">上一页</button><span>{{ page }} / {{ pages }}</span><button class="btn small" :disabled="page >= pages" @click="page++">下一页</button></div><form class="scope-add" @submit.prevent="add"><label class="form-label" for="scope-paper-id">按已知论文 ID 添加一篇</label><div class="toolbar"><input id="scope-paper-id" v-model="paperId" class="field" inputmode="numeric" placeholder="输入上传回执中的论文 ID" :disabled="busy" /><button class="btn primary" :disabled="busy || !validId(paperId.trim())"><Plus :size="14" />添加</button></div><p class="scope-warning">目前仅支持逐篇即时添加或移出，操作会立即保存。论文可在处理中加入范围，但包含未就绪论文的问题会被服务端拒绝。空范围会保留历史记录。</p></form></template><div class="dialog-actions"><button class="btn primary" :disabled="busy" @click="emit('close')">完成</button></div></Modal>
-</template>
+<template><Modal title="调整论文范围" :busy="busy" wide @close="emit('close')"><p class="muted">确认后一次保存全部选择。取消不会改动会话，历史回答与运行中任务的资料快照保留。</p><Feedback :loading="loading" :error="error"><button v-if="!conflict" class="text-link" @click="load">重新加载</button></Feedback><div v-if="conflict" class="notice"><div>资料范围已被其他窗口修改，当前选择已保留。请加载最新范围并重新确认。<button class="text-link" @click="reload">加载最新范围</button></div></div><template v-if="!loading"><div class="tabs"><button :class="{ active: tab === 'browse' }" @click="tab = 'browse'">浏览论文库</button><button :class="{ active: tab === 'selected' }" @click="tab = 'selected'">已选论文（{{ selected.length }}）</button></div><fieldset :disabled="busy" class="plain-fieldset"><PaperBrowser v-show="tab === 'browse'" :selected="selected" @toggle="toggle" @loaded="cache" /><div v-if="tab === 'selected'"><input v-model="query" class="field" placeholder="搜索已选论文" aria-label="搜索已选论文" @input="page = 1" /><div v-if="!chosen.length" class="empty-state">没有已选论文。空范围会保留历史记录，但不能提问。</div><article v-for="id in shown" :key="id" class="scope-record"><div><b>{{ catalog[id] ? paperTitle(catalog[id]!) : `论文 ${id}` }}</b><small>{{ id }}</small></div><button class="btn small" @click="selected = selected.filter(item => item !== id); page = 1">移出选择</button></article><div v-if="pages > 1" class="scope-pagination"><button class="btn small" :disabled="page <= 1" @click="page--">上一页</button>{{ page }} / {{ pages }}<button class="btn small" :disabled="page >= pages" @click="page++">下一页</button></div></div></fieldset><p class="scope-warning">可以保留处理中论文，但全部资料就绪后才能提问。最多 100 篇，当前范围版本 {{ version }}。</p><div class="dialog-actions"><button class="btn" :disabled="busy" @click="emit('close')">取消</button><button class="btn primary" :disabled="busy || conflict || !initialized || selected.length > 100" @click="save">{{ busy ? '正在保存…' : `确认选择（${selected.length} 篇）` }}</button></div></template></Modal></template>

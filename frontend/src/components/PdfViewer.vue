@@ -10,7 +10,8 @@ GlobalWorkerOptions.workerSrc = workerUrl
 const props = defineProps<{ data: Uint8Array; initialPage?: number }>()
 const canvas = ref<HTMLCanvasElement>(), page = ref(props.initialPage || 1), total = ref(0), scale = ref(1.15), loading = ref(true), error = ref('')
 let document: PDFDocumentProxy | undefined, renderTask: RenderTask | undefined, renderGeneration = 0, disposed = false
-const task = getDocument({ data: props.data.slice() })
+const assetBase = `${import.meta.env.BASE_URL}pdfjs/`
+const task = getDocument({ data: props.data.slice(), cMapUrl: `${assetBase}cmaps/`, cMapPacked: true, standardFontDataUrl: `${assetBase}standard_fonts/`, wasmUrl: `${assetBase}wasm/` })
 async function render() {
   if (!document || !canvas.value) return
   const generation = ++renderGeneration

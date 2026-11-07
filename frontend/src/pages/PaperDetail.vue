@@ -1,17 +1,38 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, FileText, NotebookPen } from 'lucide-vue-next'
-import CapabilityGap from '../components/CapabilityGap.vue'
+import { paperApi } from '../api'
+import { getPdf, messageOf } from '../api/request'
+import type { PaperDetail } from '../types/api'
 import { validId } from '../utils/format'
+import { paperStatus, paperTitle } from '../utils/papers'
+import Feedback from '../components/Feedback.vue'
+import PaperProgress from '../components/PaperProgress.vue'
+import SessionTarget from '../components/SessionTarget.vue'
 const NoteEditor = defineAsyncComponent(() => import('../components/NoteEditor.vue'))
+const PdfViewer = defineAsyncComponent(() => import('../components/PdfViewer.vue'))
 const route = useRoute(), router = useRouter()
 const id = computed(() => String(route.params.id)), tab = computed(() => route.query.tab === 'notes' ? 'notes' : 'pdf')
-const page = computed(() => { const value = Number(route.query.page); return Number.isSafeInteger(value) && value > 0 ? value : null })
+const page = computed(() => { const n = Number(route.query.page); return Number.isSafeInteger(n) && n > 0 ? n : 1 })
+const paper = ref<PaperDetail>(), error = ref(''), loading = ref(false), pdfError = ref(''), pdfLoading = ref(false), data = shallowRef<Uint8Array>()
+const target = ref<'create' | 'existing' | null>(null)
+let epoch = 0, controller: AbortController | undefined
+async function load() {
+  const token = ++epoch; loading.value = true; error.value = ''
+  try { if (!validId(id.value)) throw new Error('论文 ID 无效。'); const result = await paperApi.get(id.value); if (token === epoch) paper.value = result }
+  catch (e) { if (token === epoch) error.value = messageOf(e) }
+  finally { if (token === epoch) loading.value = false }
+}
+async function loadPdf() {
+  controller?.abort(); const current = new AbortController(); controller = current; pdfError.value = ''; pdfLoading.value = true
+  try { const bytes = await getPdf(id.value, current.signal); if (!current.signal.aborted) data.value = bytes }
+  catch (e) { if (!current.signal.aborted) pdfError.value = messageOf(e) }
+  finally { if (!current.signal.aborted) pdfLoading.value = false }
+}
+watch(id, async () => { controller?.abort(); pdfLoading.value = false; paper.value = undefined; data.value = undefined; pdfError.value = ''; target.value = null; await load() }, { immediate: true })
+watch([tab, () => paper.value?.id], () => { if (tab.value === 'pdf' && paper.value && !data.value && !pdfLoading.value) void loadPdf() })
+onBeforeUnmount(() => { epoch++; controller?.abort() })
 function select(value: string) { void router.replace({ query: { ...route.query, tab: value } }) }
 </script>
-<template>
-  <RouterLink to="/library" class="back-link"><ArrowLeft :size="15" /> 返回论文库</RouterLink><div class="page-heading"><div><div class="eyebrow">PAPER WORKSPACE</div><h1>论文阅读与笔记</h1><p>论文 ID：{{ id }}</p></div></div>
-  <div v-if="!validId(id)" class="notice error">论文 ID 无效。</div>
-  <template v-else><div class="tabs" role="tablist" aria-label="论文内容"><button role="tab" :aria-selected="tab === 'pdf'" :class="{ active: tab === 'pdf' }" @click="select('pdf')"><FileText :size="16" />论文原文</button><button role="tab" :aria-selected="tab === 'notes'" :class="{ active: tab === 'notes' }" @click="select('notes')"><NotebookPen :size="16" />阅读笔记</button></div><section v-if="tab === 'pdf'" class="panel pdf-unavailable" role="tabpanel"><CapabilityGap title="论文原文暂不可读取" detail="当前服务尚未提供经过权限校验的 PDF 读取接口。接通后可在这里翻页、缩放与定位引用原文。"><p v-if="page" class="citation-target">引用目标：PDF 物理第 {{ page }} 页</p><p class="muted">论文元数据也暂不可查询，当前仅展示论文 ID。</p></CapabilityGap></section><NoteEditor v-else :key="id" :paper-id="id" /></template>
-</template>
+<template><RouterLink to="/library" class="back-link"><ArrowLeft :size="15" />返回论文库</RouterLink><Feedback :error="error" :loading="loading"><button class="text-link" @click="load">重试</button></Feedback><template v-if="paper"><div class="page-heading"><div><div class="eyebrow">PAPER WORKSPACE</div><h1>{{ paperTitle(paper) }}</h1><p>{{ paper.authors || '作者待解析' }} · {{ paper.pageCount === null ? '页数待解析' : `${paper.pageCount} 页` }}<span v-if="paper.topic"> · {{ paper.topic }}</span></p><div class="tag-row section-space"><span class="tag">{{ paperStatus[paper.status] }}</span><span class="tag" :class="paper.canAsk ? 'green' : 'purple'">{{ paper.canAsk ? '可用于问答' : '问答索引尚未就绪' }}</span></div></div><div class="toolbar"><button class="btn" @click="target = 'existing'">加入聊天室</button><button class="btn primary" @click="target = 'create'">新建聊天室</button></div></div><details v-if="paper.abstractText" class="panel abstract-panel"><summary>论文摘要</summary><p>{{ paper.abstractText }}</p></details><PaperProgress v-if="paper.jobId" :key="paper.jobId" :job-id="paper.jobId" @settled="load" /><div v-else-if="paper.errorMessage" class="notice error">{{ paper.errorMessage }}</div><div class="tabs" role="tablist" aria-label="论文内容"><button role="tab" :aria-selected="tab === 'pdf'" :class="{ active: tab === 'pdf' }" @click="select('pdf')"><FileText :size="16" />论文原文</button><button role="tab" :aria-selected="tab === 'notes'" :class="{ active: tab === 'notes' }" @click="select('notes')"><NotebookPen :size="16" />阅读笔记</button></div><section v-if="tab === 'pdf'" role="tabpanel"><Feedback :loading="pdfLoading" :error="pdfError"><button class="text-link" @click="loadPdf">重新加载 PDF</button></Feedback><PdfViewer v-if="data" :key="id" :data="data" :initial-page="page" /></section><NoteEditor v-else :key="id" :paper-id="id" /><SessionTarget v-if="target" :mode="target" :paper-ids="[id]" @close="target = null" /></template></template>

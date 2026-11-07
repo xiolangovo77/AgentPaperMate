@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
+import { pdfFixture } from './pdf-fixture'
 
 // Explicit browser-test fixtures. None of this data is imported by the application.
 const sessionId = '9223372036854775001', paperId = '9223372036854775002'
@@ -15,6 +16,7 @@ async function fixtures(page: Page) {
     creates: [] as Record<string, unknown>[],
     failCreate: false, conflict: false, expire: false, runStatus: 'running',
     unhandled: [] as string[],
+    canAsk: true,
   }
   await page.route('**/api/**', async (route: Route) => {
     if (!new URL(route.request().url()).pathname.startsWith('/api/')) return route.continue()
@@ -23,11 +25,23 @@ async function fixtures(page: Page) {
     const ok = (data: unknown) => route.fulfill({ json: envelope(data) })
     if (state.expire) return route.fulfill({ json: envelope(null, 40100, '未登录') })
     if (path === '/appUser/get') return ok({ id: '10', username: 'test_researcher', nickname: '测试研究者' })
+    const paper = { id: paperId, title: '测试论文', originalFilename: 'paper.pdf', authors: 'Test Author', topic: 'RAG', status: 'ready', pageCount: 4, fileSize: '1024', createTime: '2026-11-08T12:00:00', updateTime: '2026-11-08T12:00:00' }
+    if (path === '/paper/list/page') return ok(paged(body.status && body.status !== 'ready' ? [] : [paper]))
+    if (path === '/paper/get') return ok({ ...paper, id: new URL(request.url()).searchParams.get('id'), canAsk: state.canAsk, jobId: null, abstractText: '测试用论文摘要', errorMessage: null })
+    if (path === '/paper/file') return route.fulfill({ contentType: 'application/pdf', body: pdfFixture() })
+    if (path === '/paperProcessingJob/get') return ok({ id: '9223372036854775003', paperId, status: 'pending', currentStep: 'queued', totalChunks: null, indexedChunks: null, retryCount: 0, updateTime: '2026-11-08T12:00:00' })
     if (path === '/chatSession/list/page') return ok(paged([state.session]))
     if (path === '/chatSession/get') return ok(state.session)
     if (path === '/chatSession/add') return ok(sessionId)
     if (path === '/chatSession/update') { state.updates.push(body); Object.assign(state.session, body); return ok(true) }
     if (path === '/sessionPaper/list/page') return ok(paged(state.papers))
+    if (path === '/sessionPaper/updateScope') {
+      state.updates.push(body)
+      if (body.scopeVersion !== state.session.scopeVersion) return route.fulfill({ json: envelope(null, 40900, '论文范围已变化，请刷新范围和版本后重试') })
+      state.papers = body.paperIds.map((id: string, i: number) => ({ id: String(600 + i), sessionId, paperId: id }))
+      state.session.scopeVersion++
+      return ok({ sessionId, paperIds: body.paperIds, scopeVersion: state.session.scopeVersion })
+    }
     if (path === '/sessionPaper/add') { state.papers.push({ id: '601', sessionId, paperId: body.paperId }); state.session.scopeVersion++; return ok('601') }
     if (path === '/sessionPaper/update') { state.papers = state.papers.filter(item => item.id !== body.id); state.session.scopeVersion++; return ok(true) }
     if (path === '/chatMessage/list/page') return ok(paged(state.messages))
@@ -59,7 +73,7 @@ async function fixtures(page: Page) {
   return state
 }
 
-test('overview, explicit capability gaps and responsive layouts', async ({ page }) => {
+test('overview, real-shaped paper metadata and responsive layouts', async ({ page }) => {
   const state = await fixtures(page), errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await page.goto('/')
@@ -72,8 +86,8 @@ test('overview, explicit capability gaps and responsive layouts', async ({ page 
   }
   await page.screenshot({ path: 'test-results/overview-mobile.png', fullPage: true })
   await page.goto('/library')
-  await expect(page.getByRole('textbox', { name: '搜索论文' })).toBeDisabled()
-  await expect(page.getByText('论文库正在等待查询能力接通')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: '搜索论文标题' })).toBeEnabled()
+  await expect(page.getByRole('link', { name: '测试论文', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '导入 PDF', exact: true }).click()
   await page.locator('input[type=file]').setInputFiles({ name: 'bad.txt', mimeType: 'text/plain', buffer: Buffer.from('no') })
   await expect(page.getByRole('alert')).toContainText('不超过 50 MB')
@@ -104,7 +118,7 @@ test('notes serialize saves and pause on a version conflict without discarding t
   page.on('dialog', dialog => dialog.accept())
 })
 
-test('chat drafts, individual scope updates, empty scope, and responsive room', async ({ page }) => {
+test('chat drafts, atomic empty scope and responsive room', async ({ page }) => {
   const state = await fixtures(page)
   await page.goto(`/chat/${sessionId}`)
   await expect(page.getByRole('heading', { name: '测试研究会话', exact: true })).toBeVisible()
@@ -117,15 +131,15 @@ test('chat drafts, individual scope updates, empty scope, and responsive room', 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/chat-mobile.png', fullPage: true })
   await page.getByRole('button', { name: '调整资料' }).click()
-  await page.getByRole('button', { name: '移出', exact: true }).click()
+  await page.getByRole('checkbox', { name: '选择 测试论文', exact: true }).uncheck()
+  expect(state.papers).toHaveLength(1)
+  await page.getByRole('button', { name: '确认选择（0 篇）' }).click()
   await expect.poll(() => state.papers.length).toBe(0)
-  await page.getByRole('button', { name: '完成', exact: true }).click()
   await expect(page.getByRole('button', { name: '发送问题' })).toBeDisabled()
   await page.getByRole('button', { name: '调整资料' }).click()
-  await page.getByLabel('按已知论文 ID 添加一篇').fill(paperId)
-  await page.getByRole('button', { name: '添加', exact: true }).click()
+  await page.getByRole('checkbox', { name: '选择 测试论文', exact: true }).check()
+  await page.getByRole('button', { name: '确认选择（1 篇）' }).click()
   await expect.poll(() => state.papers.length).toBe(1)
-  await page.getByRole('button', { name: '完成', exact: true }).click()
   await expect(page.getByRole('button', { name: '发送问题' })).toBeEnabled()
   expect(state.unhandled).toEqual([])
 })
@@ -154,7 +168,12 @@ test('sanitizes answers and uses verified citations for physical-page links', as
   await expect(page.locator('.markdown script, .markdown img, .markdown a[href^="javascript:"]')).toHaveCount(0)
   await page.getByRole('link', { name: /PDF 物理第 3–4 页/ }).click()
   await expect(page).toHaveURL(new RegExp(`/library/${paperId}\\?page=3`))
-  await expect(page.getByText('引用目标：PDF 物理第 3 页')).toBeVisible()
+  await expect(page.getByRole('spinbutton', { name: 'PDF 物理页码' })).toHaveValue('3')
+  await expect(page.locator('.pdf-toolbar')).toContainText('/ 4 页')
+  await expect(page.locator('.pdf-viewer .loading-state')).toHaveCount(0)
+  await expect.poll(() => page.locator('canvas').evaluate(canvas => (canvas as HTMLCanvasElement).width)).toBeGreaterThan(400)
+  await page.getByRole('button', { name: '下一页' }).click()
+  await expect(page.getByRole('spinbutton', { name: 'PDF 物理页码' })).toHaveValue('4')
 })
 
 test('login expiry does not loop through draft saves', async ({ page }) => {
@@ -190,7 +209,7 @@ test('PDF upload submits the returned URL and retries add without uploading twic
   await expect(page.getByRole('heading', { name: '已提交论文处理任务' })).toBeVisible()
   expect(uploads).toBe(1); expect(submissions).toBe(2)
   await expect(page.locator('dialog')).toContainText('9223372036854775003')
-  await expect(page.locator('dialog')).toContainText('尚无处理状态查询接口')
+  await expect(page.locator('dialog')).toContainText('等待处理')
 })
 
 test('final Run completion refreshes messages even when a previous history request is in flight', async ({ page }) => {
@@ -211,4 +230,101 @@ test('final Run completion refreshes messages even when a previous history reque
   await page.getByRole('button', { name: '发送问题' }).click()
   await expect(page.getByText('最终答案已持久化。', { exact: true })).toBeVisible()
   await expect(page.getByText('回答已完成', { exact: true })).toBeVisible()
+})
+
+test('scope changes are staged, cancellation writes nothing, and conflicts require reload', async ({ page }) => {
+  const state = await fixtures(page)
+  await page.goto(`/chat/${sessionId}`)
+  await page.getByRole('button', { name: '调整资料' }).click()
+  await page.getByRole('checkbox', { name: '选择 测试论文' }).uncheck()
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  expect(state.papers).toHaveLength(1)
+  expect(state.updates.filter(body => 'scopeVersion' in body)).toHaveLength(0)
+  await page.getByRole('button', { name: '调整资料' }).click()
+  await page.getByRole('checkbox', { name: '选择 测试论文' }).uncheck()
+  state.session.scopeVersion = 2
+  await page.getByRole('button', { name: '确认选择（0 篇）' }).click()
+  await expect(page.getByText('资料范围已被其他窗口修改，当前选择已保留。请加载最新范围并重新确认。')).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: '选择 测试论文' })).not.toBeChecked()
+  await expect(page.getByRole('button', { name: '确认选择（0 篇）' })).toBeDisabled()
+  expect(state.papers).toHaveLength(1)
+  page.on('dialog', dialog => dialog.accept())
+  await page.getByRole('button', { name: '加载最新范围' }).click()
+  await expect(page.getByRole('checkbox', { name: '选择 测试论文' })).toBeChecked()
+  await page.getByRole('checkbox', { name: '选择 测试论文' }).uncheck()
+  await page.getByRole('button', { name: '确认选择（0 篇）' }).click()
+  await expect.poll(() => state.papers.length).toBe(0)
+  expect(state.updates.filter(body => 'scopeVersion' in body).map(body => body.scopeVersion)).toEqual([1, 2])
+})
+
+test('library filters preserve cross-page selections and merge with existing session scope', async ({ page }) => {
+  const state = await fixtures(page)
+  const records = Array.from({ length: 12 }, (_, i) => ({ id: String(800 + i), title: `分页论文 ${i + 1}`, originalFilename: 'paper.pdf', authors: 'Author', topic: 'RAG', status: 'ready', pageCount: 4, createTime: '2026-11-08T12:00:00' }))
+  const queries: Record<string, unknown>[] = []
+  await page.route('**/api/paper/list/page', async route => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    const filtered = records.filter(paper => paper.title.includes(body.title || '') && paper.authors.includes(body.authors || '') && paper.topic.includes(body.topic || '') && (!body.status || body.status === paper.status))
+    await route.fulfill({ json: envelope({ ...paged(filtered), records: filtered.slice((body.pageNum - 1) * body.pageSize, body.pageNum * body.pageSize), current: body.pageNum, pages: Math.ceil(filtered.length / body.pageSize) }) })
+  })
+  await page.goto('/library')
+  await page.getByRole('checkbox', { name: '选择 分页论文 1', exact: true }).check()
+  await page.getByRole('button', { name: '下一页' }).click()
+  await page.getByRole('checkbox', { name: '选择 分页论文 11', exact: true }).check()
+  await page.getByRole('textbox', { name: '搜索作者' }).fill('Nobody')
+  await expect(page.getByText('没有找到论文')).toBeVisible()
+  await expect(page.getByRole('button', { name: '已选 2 篇 · 查看选择' })).toBeVisible()
+  expect(queries.at(-1)?.authors).toBe('Nobody')
+  await page.getByRole('button', { name: '加入已有聊天室', exact: true }).click()
+  await page.getByLabel('选择聊天室').selectOption(sessionId)
+  await page.getByRole('button', { name: '确认并进入聊天室' }).click()
+  await expect(page).toHaveURL(new RegExp(`/chat/${sessionId}$`))
+  expect(state.papers.map(item => item.paperId).sort()).toEqual([paperId, '800', '810'].sort())
+  expect(state.updates.filter(body => 'scopeVersion' in body)).toHaveLength(1)
+})
+
+test('ready status without a compatible index cannot create a Run', async ({ page }) => {
+  const state = await fixtures(page); state.canAsk = false
+  await page.goto(`/chat/${sessionId}`)
+  await page.getByRole('textbox', { name: '研究问题', exact: true }).fill('不能发送此问题')
+  await expect(page.getByText('资料中有论文尚未就绪或索引不兼容，暂不能提问。')).toBeVisible()
+  await expect(page.getByRole('button', { name: '发送问题' })).toBeDisabled()
+  expect(state.creates).toHaveLength(0)
+  state.canAsk = true
+  await page.getByRole('button', { name: '重新检查' }).click()
+  await expect(page.getByRole('button', { name: '发送问题' })).toBeEnabled()
+})
+
+test('PDF business errors remain visible and retry renders real pages', async ({ page }) => {
+  await fixtures(page)
+  let requests = 0
+  await page.route('**/api/paper/file?**', route => {
+    requests++
+    if (requests === 1) return route.fulfill({ json: envelope(null, 40400, '原文暂不可读取') })
+    return route.fulfill({ contentType: 'application/pdf', body: pdfFixture() })
+  })
+  await page.goto(`/library/${paperId}?page=3`)
+  await expect(page.getByText('原文暂不可读取')).toBeVisible()
+  await page.getByRole('button', { name: '重新加载 PDF' }).click()
+  await expect(page.getByRole('spinbutton', { name: 'PDF 物理页码' })).toHaveValue('3')
+  await expect(page.locator('.pdf-toolbar')).toContainText('/ 4 页')
+  await expect(page.locator('.pdf-viewer .loading-state')).toHaveCount(0)
+  await expect.poll(() => page.locator('canvas').evaluate(canvas => (canvas as HTMLCanvasElement).width)).toBeGreaterThan(400)
+  await page.getByRole('button', { name: '放大', exact: true }).click()
+  await expect(page.getByText('130%', { exact: true })).toBeVisible()
+  await expect(page.locator('.pdf-viewer .loading-state')).toHaveCount(0)
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/pdf-mobile.png', fullPage: true })
+})
+
+test('processing job polls to completion and refreshes paper readiness', async ({ page }) => {
+  await fixtures(page)
+  let jobs = 0, details = 0
+  await page.route('**/api/paper/get?**', route => { details++; return route.fulfill({ json: envelope({ id: paperId, title: '处理中论文', authors: null, originalFilename: 'paper.pdf', pageCount: 4, status: jobs >= 2 ? 'ready' : 'processing', canAsk: jobs >= 2, jobId: '900', createTime: '', updateTime: '' }) }) })
+  await page.route('**/api/paperProcessingJob/get?**', route => { jobs++; return route.fulfill({ json: envelope({ id: '900', paperId, status: jobs >= 2 ? 'completed' : 'running', currentStep: 'indexing', totalChunks: 10, indexedChunks: jobs >= 2 ? 10 : 5, retryCount: 0, updateTime: '' }) }) })
+  await page.goto(`/library/${paperId}?tab=notes`)
+  await expect(page.getByText('已写入 5 / 10 个片段')).toBeVisible()
+  await expect(page.getByText('已写入 10 / 10 个片段')).toBeVisible({ timeout: 8000 })
+  await expect(page.getByText('可用于问答', { exact: true })).toBeVisible()
+  expect(details).toBeGreaterThanOrEqual(2)
 })

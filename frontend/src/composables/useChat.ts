@@ -1,13 +1,16 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { messageApi, runApi, sessionApi } from '../api'
 import { apiBase, ApiError, messageOf } from '../api/request'
-import type { Message, Run, Session, SessionPaper } from '../types/api'
+import type { Message, Run, Session, SessionPaper, PaperDetail } from '../types/api'
 import { useChatStore } from '../stores/chat'
 import { downloadMarkdown } from '../utils/format'
 import { observeRun, terminal } from '../utils/runObserver'
+import { paperDetails, readScope } from '../utils/papers'
 
 export function useChat() {
   const recovery = useChatStore()
+  const paperInfo = ref<Record<string, PaperDetail>>({}), checkingPapers = ref(false), readinessError = ref('')
+  const allReady = computed(() => papers.value.length > 0 && !checkingPapers.value && !readinessError.value && papers.value.every(item => paperInfo.value[item.paperId]?.canAsk))
   const session = ref<Session | null>(null), papers = ref<SessionPaper[]>([]), messages = ref<Message[]>([])
   const loading = ref(false), error = ref(''), draft = ref(''), savedDraft = ref(''), draftError = ref(''), savingDraft = ref(false)
   const messagePage = ref(1), messagePages = ref(1), moreBusy = ref(false), messageError = ref('')
@@ -19,12 +22,19 @@ export function useChat() {
   let epoch = 0, draftTimer: ReturnType<typeof setTimeout> | undefined, draftFlight: Promise<boolean> | undefined
   let observer: ReturnType<typeof observeRun> | undefined, lastTerminal = ''
   let scopeEpoch = 0, refreshMessagesAfterFlight = false
+  let readinessEpoch = 0, readinessTimer: ReturnType<typeof setTimeout> | undefined
 
-  async function getScope(id: string) {
-    const first = await sessionApi.papers(id)
-    const result = [...first.records]
-    for (let page = 2; page <= Number(first.pages); page++) result.push(...(await sessionApi.papers(id, page)).records)
-    return result
+  async function checkReadiness() {
+    clearTimeout(readinessTimer)
+    const token = epoch, sequence = ++readinessEpoch
+    checkingPapers.value = true; readinessError.value = ''
+    try {
+      const details = await paperDetails(papers.value.map(item => item.paperId))
+      if (token !== epoch || sequence !== readinessEpoch) return
+      paperInfo.value = Object.fromEntries(details.map(item => [item.id, item]))
+      if (details.some(item => ['uploaded', 'processing'].includes(item.status))) readinessTimer = setTimeout(() => void checkReadiness(), 5000)
+    } catch (e) { if (token === epoch && sequence === readinessEpoch) readinessError.value = messageOf(e) }
+    finally { if (token === epoch && sequence === readinessEpoch) checkingPapers.value = false }
   }
   async function loadMessages(older = false) {
     if (!session.value) return
@@ -50,9 +60,10 @@ export function useChat() {
     const id = session.value.id, token = epoch, scopeToken = ++scopeEpoch
     error.value = ''
     try {
-      const [next, scope] = await Promise.all([sessionApi.get(id), getScope(id)])
+      const snapshot = await readScope(id)
       if (token !== epoch || scopeToken !== scopeEpoch) return
-      session.value = next; papers.value = scope
+      session.value = snapshot.session; papers.value = snapshot.papers
+      await checkReadiness()
       await loadMessages()
     } catch (e) { if (token === epoch && scopeToken === scopeEpoch) error.value = messageOf(e) }
   }
@@ -79,14 +90,16 @@ export function useChat() {
     observer?.stop(); observer = undefined; clearTimeout(draftTimer)
     const token = ++epoch
     refreshMessagesAfterFlight = false; scopeEpoch++
+    clearTimeout(readinessTimer); readinessEpoch++; paperInfo.value = {}; readinessError.value = ''; checkingPapers.value = false
     session.value = null; messages.value = []; papers.value = []; error.value = ''; messageError.value = ''; draftError.value = ''
     draft.value = ''; savedDraft.value = ''; run.value = null; runId.value = ''; runError.value = ''; stage.value = ''; lastTerminal = ''; moreBusy.value = false
     if (!id) { loading.value = false; return }
     loading.value = true
     try {
-      const [current, scope] = await Promise.all([sessionApi.get(id), getScope(id)])
+      const { session: current, papers: scope } = await readScope(id)
       if (token !== epoch) return
       session.value = current; papers.value = scope; draft.value = current.inputDraft || ''; savedDraft.value = draft.value
+      void checkReadiness()
       await loadMessages()
       if (token !== epoch) return
       if (current.activeRunId) {
@@ -131,6 +144,15 @@ export function useChat() {
     submitting.value = true
     let createdId = ''
     try {
+      if (!recovery.pending[id]) {
+        const latest = await readScope(id)
+        if (token !== epoch) return
+        const changed = latest.session.scopeVersion !== session.value.scopeVersion
+        session.value = latest.session; papers.value = latest.papers
+        await checkReadiness()
+        if (changed) throw new Error('资料范围已变化，已加载最新资料，请重新确认后提问。')
+        if (!allReady.value) throw new Error(readinessError.value || '当前资料包含尚未就绪或不可问答的论文，请等待处理完成或调整资料范围。')
+      }
       if (retry?.runId) {
         const previous = await runApi.get(retry.runId)
         if (!terminal(previous.status)) throw new Error('该问题仍在执行，请等待完成或先取消任务。')
@@ -185,6 +207,6 @@ export function useChat() {
   }
   function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || submitting.value || uncertain.value) { event.preventDefault(); event.returnValue = '' } }
   window.addEventListener('beforeunload', beforeUnload)
-  onBeforeUnmount(() => { epoch++; observer?.stop(); clearTimeout(draftTimer); window.removeEventListener('beforeunload', beforeUnload) })
-  return { session, papers, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
+  onBeforeUnmount(() => { epoch++; observer?.stop(); clearTimeout(draftTimer); clearTimeout(readinessTimer); window.removeEventListener('beforeunload', beforeUnload) })
+  return { session, papers, paperInfo, allReady, checkingPapers, readinessError, checkReadiness, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
 }

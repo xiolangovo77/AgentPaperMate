@@ -19,6 +19,19 @@ test('live backend: register, login, profile, session persistence and logout', a
   await page.getByRole('button', { name: '创建聊天室', exact: true }).last().click()
   await expect(page.getByRole('heading', { name: '前端联调验证会话', exact: true })).toBeVisible()
   const roomUrl = page.url()
+  // Verify all five new routes against the running backend, without uploading or charging model calls.
+  const id = roomUrl.split('/').at(-1)!
+  const current = (await (await page.request.get(`/api/chatSession/get?id=${id}`)).json()).data
+  const library = await (await page.request.post('/api/paper/list/page', { data: { pageNum: 1, pageSize: 10, title: '', authors: '', topic: '', status: '' } })).json()
+  expect(library.code).toBe(0); expect(library.data.records).toEqual([])
+  const scope = await (await page.request.post('/api/sessionPaper/updateScope', { data: { sessionId: id, paperIds: [], scopeVersion: current.scopeVersion } })).json()
+  expect(scope.code).toBe(0); expect(scope.data.paperIds).toEqual([]); expect(scope.data.scopeVersion).toBe(current.scopeVersion)
+  const conflict = await (await page.request.post('/api/sessionPaper/updateScope', { data: { sessionId: id, paperIds: [], scopeVersion: current.scopeVersion + 1 } })).json()
+  expect(conflict.code).toBe(40900)
+  for (const endpoint of ['/paper/get?id=1', '/paperProcessingJob/get?id=1', '/paper/file?id=1']) {
+    const response = await page.request.get(`/api${endpoint}`)
+    expect((await response.json()).code).toBe(40400)
+  }
   await page.getByRole('textbox', { name: '研究问题', exact: true }).fill('真实后端持久化草稿验证')
   await expect(page.getByText('草稿已同步', { exact: true })).toBeVisible()
   await page.reload()

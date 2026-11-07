@@ -14,6 +14,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.retry.support.RetryTemplate;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * 保留原生 DashScope ChatModel，修正 M6.1 getMaxTokens 恒为 null 导致输出预算未发送的问题。
@@ -48,7 +49,7 @@ public class BudgetedDashScopeChatModel implements ChatModel {
         int maximum = requested == null ? properties.getMaxOutputTokens() : requested;
         if (maximum < 1 || maximum > 16000) throw new IllegalArgumentException("模型输出预算无效");
 
-        //2、在 SDK 构造原生请求后补齐 max_tokens，其余参数和响应解析仍交给 SDK
+        //2、在原生请求边界补齐输出预算和模型端点兼容，响应解析仍交给 SDK
         var api = new DashScopeApi(connection.getBaseUrl(), connection.getApiKey(), connection.getWorkspaceId(),
                 org.springframework.web.client.RestClient.builder().requestFactory(factory),
                 org.springframework.web.reactive.function.client.WebClient.builder(), RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER) {
@@ -59,8 +60,21 @@ public class BudgetedDashScopeChatModel implements ChatModel {
                         p.topP(), p.topK(), p.repetitionPenalty(), p.presencePenalty(), p.temperature(), p.stop(),
                         p.enableSearch(), p.responseFormat(), p.incrementalOutput(), p.tools(), p.toolChoice(),
                         p.stream(), p.vlHighResolutionImages());
-                return super.chatCompletionEntity(new ChatCompletionRequest(request.model(), request.input(), bounded,
-                        request.stream(), request.multiModel()));
+                // M6.1 不识别 qwen3.7-plus：即使只传文本，也要求多模态端点和 content 数组。
+                // 按任务实际模型选择，避免当前默认模型影响已保存的任务快照。
+                boolean multiModel = Boolean.TRUE.equals(request.multiModel())
+                        || "qwen3.7-plus".equals(request.model())
+                        || (request.model() != null && request.model().startsWith("qwen3.7-plus-"));
+                var input = request.input();
+                if (multiModel) {
+                    input = new ChatCompletionRequestInput(input.messages().stream().map(message ->
+                            message.rawContent() instanceof String text
+                                    ? new ChatCompletionMessage(List.of(new ChatCompletionMessage.MediaContent(text)),
+                                    message.role(), message.name(), message.toolCallId(), message.toolCalls(),
+                                    message.reasoningContent()) : message).toList());
+                }
+                return super.chatCompletionEntity(new ChatCompletionRequest(request.model(), input, bounded,
+                        request.stream(), multiModel));
             }
         };
         var defaults = DashScopeChatOptions.builder().withModel(properties.getModel()).withEnableSearch(false).build();

@@ -1,4 +1,4 @@
-package com.ecnu.agentpapermate.rag;
+package com.ecnu.agentpapermate.support.ai;
 
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.model.AgentRun;

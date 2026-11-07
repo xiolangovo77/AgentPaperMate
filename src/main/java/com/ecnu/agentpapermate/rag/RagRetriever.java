@@ -6,6 +6,7 @@ import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
+import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.knuddels.jtokkit.Encodings;

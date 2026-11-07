@@ -10,6 +10,8 @@
 
 当前 SDK 的 `getMaxTokens()` 恒返回 null，`BudgetedDashScopeChatModel` 在原生请求边界补齐任务的 `max_tokens`；`getCompletionTokens()` 恒返回 0，回答用量读取原生 `getGenerationTokens()`。本地 HTTP 测试直接检查请求和返回用量，后续升级 SDK 时应重新验证这些兼容处理。
 
+`qwen3.7-plus`（含日期版本）即使只输入文本，也必须调用 `multimodal-generation` 端点。M6.1 默认使用文本端点，会返回 `400 InvalidParameter: url error, please check url`。上述适配器根据任务实际模型设置原生请求的 `multiModel` 标志，并将字符串消息转换为 `[{"text":"..."}]`；`qwen-plus` 等文本模型继续使用文本端点。切换其他模型时应核对其端点要求，不能只修改 base-url。参见[百炼错误码说明](https://help.aliyun.com/zh/model-studio/error-code/)。
+
 默认参数：每实例同时执行 4 个 Run，单次外部请求最长 60 秒，运行总预算 180 秒，排队最长 300 秒；每秒扫描数据库队列。模型调用与检索都在事务外执行。
 
 关闭 `rag.enabled` 会拒绝新任务，但已有任务仍会回收到终态；`rag.scheduler.enabled=false` 则完全关闭本实例的问答调度，主要用于离线测试。至少一个服务实例必须启用调度。

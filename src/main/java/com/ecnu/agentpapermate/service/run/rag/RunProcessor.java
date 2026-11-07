@@ -6,7 +6,7 @@ import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.validator.AnswerValidator;
 import com.ecnu.agentpapermate.rag.RagAnswerGenerator;
-import com.ecnu.agentpapermate.rag.RagCalls;
+import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.rag.RagRetriever;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

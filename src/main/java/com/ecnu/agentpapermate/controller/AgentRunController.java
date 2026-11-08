@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.controller;
 
 import com.ecnu.agentpapermate.entity.vo.run.RunView;
+import com.ecnu.agentpapermate.entity.vo.run.RunEvaluationView;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -59,6 +60,15 @@ public class AgentRunController {
     @GetMapping("/get")
     public BaseResponse<RunView> get(@RequestParam Long id, HttpServletRequest request) {
         return ResultUtils.success(runs.getRun(id, users.getLoginUser(request).getId()));
+    }
+
+    /** 查询本人的任务评测数据；只读，不触发检索、生成或裁判评分。 */
+    @GetMapping("/evaluation")
+    public BaseResponse<RunEvaluationView> evaluation(@RequestParam Long id, HttpServletRequest request,
+                                                     HttpServletResponse response) {
+        Long userId = users.getLoginUser(request).getId();
+        response.setHeader("Cache-Control", "no-store");
+        return ResultUtils.success(runs.getEvaluation(id, userId));
     }
 
     /** 用户明确停止生成，重复取消返回已有终态。 */

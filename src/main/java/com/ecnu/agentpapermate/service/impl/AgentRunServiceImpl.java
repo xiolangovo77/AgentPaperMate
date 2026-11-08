@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.service.impl;
 
 import com.ecnu.agentpapermate.entity.vo.run.RunView;
+import com.ecnu.agentpapermate.entity.vo.run.RunEvaluationView;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.mapper.AgentRunMapper;
 import com.ecnu.agentpapermate.service.AgentRunService;
@@ -41,6 +42,11 @@ public class AgentRunServiceImpl extends ServiceImpl<AgentRunMapper, AgentRun> i
     public RunView getRun(Long id, Long userId) {
         //1、验证归属并读取已持久化结果
         return queries.view(id, userId);
+    }
+
+    @Override
+    public RunEvaluationView getEvaluation(Long id, Long userId) {
+        return queries.evaluation(id, userId);
     }
 
     @Override

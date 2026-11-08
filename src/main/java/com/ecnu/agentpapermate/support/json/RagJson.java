@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.ArrayList;
+import java.util.HashSet;
 
 /** 统一读取任务快照，禁止将反序列化异常当作空证据处理。 */
 @Component
@@ -50,5 +52,20 @@ public class RagJson {
         } catch (java.io.IOException e) {
             throw new IllegalStateException("任务证据快照无效", e);
         }
+    }
+
+    /** 严格读取有序候选，不将损坏的数据、数字或 JSON null 当作空检索。 */
+    public List<String> retrievedChunkIds(String value) {
+        JsonNode root = tree(value);
+        if (root == null || !root.isArray()) throw new IllegalStateException("任务检索快照必须是数组");
+        List<String> result = new ArrayList<>();
+        var seen = new HashSet<String>();
+        for (JsonNode id : root) {
+            if (!id.isTextual() || id.asText().isBlank() || !seen.add(id.asText())) {
+                throw new IllegalStateException("任务检索快照包含无效或重复 Chunk ID");
+            }
+            result.add(id.asText());
+        }
+        return List.copyOf(result);
     }
 }

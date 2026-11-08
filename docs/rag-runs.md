@@ -37,6 +37,7 @@
 | `GET /api/agentRun/request-key` | 无 | 新 UUID，不缓存 |
 | `POST /api/agentRun/add` | 下述 JSON | `runId` |
 | `GET /api/agentRun/get` | `id=runId` | 状态、时间、错误、最终消息及引用 |
+| `GET /api/agentRun/evaluation` | `id=runId` | 评测采集数据，使用 `snake_case` 字段名 |
 | `POST /api/agentRun/cancel` | `{"id":"runId"}` | 最终状态字符串 |
 | `GET /api/agentRun/events` | `id=runId&afterEventSeq=0` | SSE；也支持 `Last-Event-ID` |
 | `GET /api/runEvent/list` | `runId`、`afterEventSeq=0` | 按序返回最多 100 个事件 |
@@ -54,6 +55,46 @@
 `retryOfRunId` 可选，主动重新执行已结束任务时传旧任务 ID，并使用新 `requestKey`。前端也可以直接生成 UUID；后端签发的键不是身份凭证，所有接口都必须登录。
 
 同一会话、同一键、相同问题和重试关联返回原 `runId`，即使原任务已经结束，也不会再次执行。相同键提交不同内容、会话已有其他活动任务时，由 `GlobalExceptionHandler` 返回业务码 `40900`。业务异常沿用项目统一处理方式，HTTP 状态为 200，前端根据响应体的 `code` 判断结果。问题不超过 16000 个 UTF-8 字节，键为 16～64 位字母、数字、下划线或连字符。
+
+## 评测数据查询
+
+`GET /api/agentRun/evaluation?id=<runId>` 需要现有登录 Session，返回统一的 `BaseResponse`，并设置 `Cache-Control: no-store`。服务端只按当前登录用户校验任务及会话归属，不接受客户端 `userId` 作为授权依据；不属于当前用户、已删除或不存在的任务按现有规则返回业务错误。接口只读取已保存的数据，不触发检索、生成或模型裁判。
+
+成功响应示例（示意数据）：
+
+```json
+{
+  "code": 0,
+  "data": {
+    "run_id": "1234567890123456789",
+    "status": "completed",
+    "question": "论文采用了什么方法？",
+    "retrieved_chunk_ids": ["chunk_A", "chunk_B", "chunk_C"],
+    "final_evidence_chunk_ids": ["chunk_A", "chunk_B"],
+    "final_evidence": [
+      {"evidence_id": "E1", "paper_id": "21", "chunk_id": "chunk_A", "text": "实际进入模型的原文 A"},
+      {"evidence_id": "E2", "paper_id": "21", "chunk_id": "chunk_B", "text": "实际进入模型的原文 B"}
+    ],
+    "answer": "论文采用了该方法。[E1]",
+    "citations": [
+      {"evidence_id": "E1", "paper_id": "21", "chunk_id": "chunk_A", "page_start": 5, "page_end": 5}
+    ],
+    "latency_ms": 18000,
+    "input_tokens": 1200,
+    "output_tokens": 310,
+    "error_code": null,
+    "error_message": null
+  },
+  "message": "ok"
+}
+```
+
+- `retrieved_chunk_ids` 保留数据库 `retrieval_snapshot` 的候选顺序；`final_evidence` 来自完整的最终证据快照，其中 `text` 对应 `quotedText`。`citations` 只包含助手实际引用的条目，不能用全部最终证据代替。
+- SQL `NULL` 快照导出为 null，不从其他字段补造；已采集空数组导出为 `[]`。损坏、类型不符或重复 ID 的候选快照作为数据异常处理，不静默变成空检索。
+- `latency_ms` 是终态任务的 `end_time - start_time`，含检索、模型及工具执行，不含排队和脚本轮询；未进入终态、尚未开始执行或起止时间不完整时为 null。
+- 已完成任务返回已发布的答案及引用；未完成、失败、超时或取消的任务返回 `answer: null`、`citations: null`，但保留已经提交的检索和最终证据快照以及错误信息。
+- `input_tokens`、`output_tokens` 仅在 completed 时返回数据库记录。当前执行器在成功完成时才保存模型用量，其他状态返回 null，避免把初始 0 误认为失败任务没有消耗。无证据且没有调用模型的 completed 任务可返回 0。
+- 所有 ID 是字符串，耗时和 Token 是 JSON 数字，适合直接写入评测预测记录。题集 ID（如 A09）由采集脚本关联；`judge_*` 字段由后续评分阶段补充，接口不生成评分。内部模型配置、论文权限快照和文件 URL 不对外导出。
 
 ## 事件与取消
 
@@ -105,7 +146,7 @@ extra_data = beforePaperIds、afterPaperIds、scopeVersion、paperId、action
 
 `pending` 来自数据库队列，提交成功后即使进程退出仍可被下一实例领取。领取后没有自动重试；崩溃遗留的 `running` 任务在持久化的 `deadline` 到达后由扫描器标记 `timeout` 并释放会话占用，避免新实例误杀其他实例正在执行的任务。取消尽可能中止底层请求；不支持中止的调用可以继续消耗上游资源，但其结果不能写入任务。
 
-使用现有 `agent_run`、`run_event`、`chat_message`、`message_citation` 及其唯一索引。已有数据库的 `agent_run` 必须包含新增的 `retrieval_snapshot JSON NULL` 字段；新建数据库使用仓库当前建表脚本。本次接入只负责快照采集和持久化，现有前端详情及 SSE 接口返回结构保持不变。
+使用现有 `agent_run`、`run_event`、`chat_message`、`message_citation` 及其唯一索引。已有数据库的 `agent_run` 必须包含新增的 `retrieval_snapshot JSON NULL` 字段；新建数据库使用仓库当前建表脚本。评测数据由独立的 `/agentRun/evaluation` 接口读取，现有前端详情及 SSE 接口返回结构保持不变。
 
 离线验证命令（PowerShell 中保留参数引号）：
 

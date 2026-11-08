@@ -2,6 +2,7 @@ package com.ecnu.agentpapermate.service.run.rag;
 
 import com.ecnu.agentpapermate.entity.vo.run.EventView;
 import com.ecnu.agentpapermate.entity.vo.run.RunView;
+import com.ecnu.agentpapermate.entity.vo.run.RunEvaluationView;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ecnu.agentpapermate.entity.model.*;
@@ -12,7 +13,9 @@ import com.ecnu.agentpapermate.support.json.RagJson;
 import com.ecnu.agentpapermate.service.ChatSessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -55,6 +58,41 @@ public class RunQueries {
                 new QueryWrapper<MessageCitation>().eq("message_id", answer.getId()).orderByAsc("id"));
         return new RunView(runId, run.getSessionId(), run.getStatus(), run.getEventSeq(), run.getStartTime(),
                 run.getEndTime(), run.getDeadline(), run.getErrorCode(), run.getErrorMessage(), answer, sources);
+    }
+
+    @Transactional(readOnly = true)
+    public RunEvaluationView evaluation(Long runId, Long userId) {
+        //1、先检查任务及会话归属；同一只读事务读取任务、回答和引用
+        AgentRun run = store.owned(runId, userId);
+        List<String> retrieved = run.getRetrievalSnapshot() == null ? null
+                : json.retrievedChunkIds(run.getRetrievalSnapshot());
+        var evidence = run.getEvidenceSnapshot() == null ? null : json.evidence(run.getEvidenceSnapshot());
+        if (run.getEvidenceSnapshot() != null && evidence == null) {
+            throw new IllegalStateException("任务最终证据快照必须是数组");
+        }
+        List<RunEvaluationView.FinalEvidence> finalEvidence = evidence == null ? null : evidence.stream()
+                .map(item -> new RunEvaluationView.FinalEvidence(item.evidenceId(), item.paperId().toString(),
+                        item.chunkId(), item.quotedText())).toList();
+        List<String> finalIds = evidence == null ? null : evidence.stream().map(item -> item.chunkId()).toList();
+
+        //2、仅已完成任务有发布的回答和实际引用，不能将全部最终证据冒充引用
+        boolean completed = "completed".equals(run.getStatus());
+        ChatMessage answer = completed ? messages.selectOne(new QueryWrapper<ChatMessage>()
+                .eq("run_id", runId).eq("role", "assistant")) : null;
+        if (completed && answer == null) throw new IllegalStateException("已完成任务缺少回答记录");
+        List<RunEvaluationView.Citation> sources = answer == null ? null : citations.selectList(
+                new QueryWrapper<MessageCitation>().eq("message_id", answer.getId()).orderByAsc("id")).stream()
+                .map(item -> new RunEvaluationView.Citation(item.getEvidenceId(), item.getPaperId().toString(),
+                        item.getChunkId(), item.getPageStart(), item.getPageEnd())).toList();
+
+        //3、耗时只计任务执行；失败任务尚未可靠累计模型用量，返回 null 而非初始的 0
+        Long latency = RunStore.terminal(run.getStatus()) && run.getStartTime() != null && run.getEndTime() != null
+                && !run.getEndTime().isBefore(run.getStartTime())
+                ? Duration.between(run.getStartTime(), run.getEndTime()).toMillis() : null;
+        return new RunEvaluationView(run.getId().toString(), run.getStatus(), run.getUserQuery(), retrieved,
+                finalIds, finalEvidence, answer == null ? null : answer.getContent(), sources, latency,
+                completed ? run.getInputTokens() : null, completed ? run.getOutputTokens() : null,
+                run.getErrorCode(), run.getErrorMessage());
     }
 
     public List<EventView> events(Long runId, Long after, Long userId) {

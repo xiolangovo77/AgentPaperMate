@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.service;
 
 import com.ecnu.agentpapermate.entity.vo.run.RunView;
+import com.ecnu.agentpapermate.entity.vo.run.RunEvaluationView;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.ecnu.agentpapermate.entity.dto.run.RunCreateRequest;
@@ -18,6 +19,8 @@ public interface AgentRunService extends IService<AgentRun> {
     Long createRun(RunCreateRequest request, Long userId);
     /** 查询所属任务及最终结果。 */
     RunView getRun(Long id, Long userId);
+    /** 查询所属任务的评测采集数据，不执行模型评分。 */
+    RunEvaluationView getEvaluation(Long id, Long userId);
     /** 请求取消，已结束任务保持原状态。 */
     String cancelRun(Long id, Long userId);
 }

@@ -3,6 +3,7 @@ package com.ecnu.agentpapermate.rag;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
+import com.ecnu.agentpapermate.rag.model.RetrievalResult;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.dto.run.RunCreateRequest;
@@ -150,7 +151,7 @@ class RunStoreTest {
 
     @Test
     void successfulAnswerCitationAndFinalEventCommitTogetherAndCannotBeCancelledLater() {
-        store.start(40L); assertTrue(store.retrievalStarted(40L)); assertTrue(store.retrieved(40L, List.of(evidence())));
+        store.start(40L); assertTrue(store.retrievalStarted(40L)); assertTrue(store.retrieved(40L, retrieval()));
         clearInvocations(transactions, messages, citations, events, sessions);
         assertTrue(store.complete(40L, answer()));
         var citation = ArgumentCaptor.forClass(MessageCitation.class);
@@ -215,6 +216,68 @@ class RunStoreTest {
         assertEquals(1L, event.getValue().getEventSeq());
     }
 
+    @Test
+    void retrievalSnapshotsAndEventCommitInOneTransactionAndSurviveGenerationFailure() {
+        store.start(40L); store.retrievalStarted(40L);
+        clearInvocations(transactions, runs, events);
+        assertTrue(store.retrieved(40L, retrieval()));
+        assertEquals(json.tree("[\"chunk1\",\"chunk2\"]"), json.tree(run.getRetrievalSnapshot()));
+        assertEquals(List.of(evidence()), json.evidence(run.getEvidenceSnapshot()));
+        var order = inOrder(transactions, runs, events);
+        order.verify(transactions).getTransaction(any());
+        order.verify(runs, times(2)).updateById(argThat((AgentRun saved) -> saved.getRetrievalSnapshot() != null
+                && saved.getEvidenceSnapshot() != null));
+        order.verify(events).insert(argThat((RunEvent event) -> "retrieval_completed".equals(event.getEventType())));
+        order.verify(transactions).commit(transaction);
+        String candidates = run.getRetrievalSnapshot(), evidence = run.getEvidenceSnapshot();
+        store.fail(40L, "EXECUTION_FAILED", "generation failed", false);
+        assertEquals(candidates, run.getRetrievalSnapshot());
+        assertEquals(evidence, run.getEvidenceSnapshot());
+    }
+
+    @Test
+    void emptyRetrievalIsStoredAsJsonArraysRatherThanNull() {
+        store.start(40L); store.retrievalStarted(40L);
+        assertTrue(store.retrieved(40L, new RetrievalResult(List.of(), List.of())));
+        assertEquals("[]", run.getRetrievalSnapshot());
+        assertEquals("[]", run.getEvidenceSnapshot());
+    }
+
+    @Test
+    void cancellationPreventsLateSnapshotWrites() {
+        run.setEvidenceSnapshot(null);
+        store.start(40L); store.retrievalStarted(40L);
+        when(runs.selectOne(any())).thenReturn(run);
+        store.cancel(40L, 20L);
+        clearInvocations(runs, events);
+        assertFalse(store.retrieved(40L, retrieval()));
+        assertNull(run.getRetrievalSnapshot());
+        assertNull(run.getEvidenceSnapshot());
+        verify(runs, never()).updateById(any(AgentRun.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    void deadlinePreventsLateSnapshotWrites() {
+        run.setEvidenceSnapshot(null);
+        store.start(40L); store.retrievalStarted(40L);
+        run.setDeadline(LocalDateTime.now(clock));
+        assertFalse(store.retrieved(40L, retrieval()));
+        assertEquals("timeout", run.getStatus());
+        assertNull(run.getRetrievalSnapshot());
+        assertNull(run.getEvidenceSnapshot());
+    }
+
+    @Test
+    void retrievalEventFailureRollsBackSnapshotTransaction() {
+        store.start(40L); store.retrievalStarted(40L);
+        clearInvocations(transactions);
+        when(events.insert(any(RunEvent.class))).thenReturn(0);
+        assertThrows(IllegalStateException.class, () -> store.retrieved(40L, retrieval()));
+        verify(transactions).rollback(transaction);
+        verify(transactions, never()).commit(any());
+    }
+
     private void runningAfterRetrieval() {
         run.setStatus("running"); run.setEventSeq(3L); run.setDeadline(LocalDateTime.now(clock).plusSeconds(10));
     }
@@ -227,4 +290,5 @@ class RunStoreTest {
     static PaperScope scope() { return new PaperScope(30L, "Paper", 1, "attempt", "paper_test", "embedding", "v1", 3, "https://files.example/paper.pdf"); }
     static Evidence evidence() { return new Evidence("E1", 30L, "Paper", 1, "paper_test", "chunk1", 2, 3, "原文", "https://files.example/paper.pdf"); }
     static Answer answer() { return new Answer("答案[E1]", List.of("E1"), 10, 20); }
+    static RetrievalResult retrieval() { return new RetrievalResult(List.of("chunk1", "chunk2"), List.of(evidence())); }
 }

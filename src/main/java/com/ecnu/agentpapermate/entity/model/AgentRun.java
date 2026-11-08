@@ -83,7 +83,14 @@ public class AgentRun implements Serializable {
     private String papersSnapshot;
 
     /**
-     * 本次允许引用的证据清单，保存来源定位与必要摘录，不存向量
+     * RRF 融合去重后、证据 Token 和数量筛选前的有序 Chunk ID 数组，不存向量。
+     * null 表示未采集，JSON 空数组表示检索成功但没有候选。
+     */
+    @TableField("retrieval_snapshot")
+    private String retrievalSnapshot;
+
+    /**
+     * 证据预算筛选后的最终证据清单，保存来源定位与原文摘录，不存向量
      */
     @TableField("evidence_snapshot")
     private String evidenceSnapshot;

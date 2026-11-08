@@ -2,6 +2,7 @@ package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
+import com.ecnu.agentpapermate.rag.model.RetrievalResult;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
@@ -61,7 +62,7 @@ public class RagRetriever {
         this.processing = processing; this.json = json; this.calls = calls;
     }
 
-    public List<Evidence> retrieve(AgentRun run) {
+    public RetrievalResult retrieve(AgentRun run) {
         //1、用 query 模式生成问题向量，不能沿用入库时的 document 模式
         List<PaperScope> scopes = json.scopes(run.getPapersSnapshot());
         if (scopes.isEmpty()) throw new IllegalStateException("检索范围为空");
@@ -111,7 +112,7 @@ public class RagRetriever {
                 Map.of("bool", Map.of("should", allowed, "minimum_should_match", 1)))));
     }
 
-    List<Evidence> fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
+    RetrievalResult fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
         Map<String, JsonNode> hits = new HashMap<>();
         Map<String, Double> scores = new HashMap<>();
         for (JsonNode response : responses) {
@@ -126,9 +127,8 @@ public class RagRetriever {
         }
         List<String> ordered = scores.keySet().stream().sorted(Comparator
                 .<String>comparingDouble(scores::get).reversed().thenComparing(Comparator.naturalOrder())).toList();
-        List<Evidence> result = new ArrayList<>();
-        int tokens = 0;
-        Set<String> contents = new HashSet<>();
+        List<Candidate> candidates = new ArrayList<>();
+        Set<String> chunkIds = new HashSet<>();
         for (String key : ordered) {
             JsonNode hit = hits.get(key);
             JsonNode meta = hit.at("/_source/metadata");
@@ -152,15 +152,27 @@ public class RagRetriever {
             int boundary = content.indexOf("\n\n");
             String quote = (boundary >= 0 ? content.substring(boundary + 2) : content).strip();
             if (quote.isBlank() || chunkId.isBlank() || chunkId.length() > 128) continue;
-            int cost = encoding.countTokens(quote);
-            if (tokens + cost > properties.getEvidenceTokenBudget() || !contents.add(scope.paperId() + "\n" + quote)) continue;
+            if (chunkIds.add(chunkId)) candidates.add(new Candidate(scope, chunkId, start, end, quote));
+        }
+
+        //6、先收集完整候选，再做原文去重、Token 和数量筛选，避免 break 截短候选快照
+        List<Evidence> result = new ArrayList<>();
+        int tokens = 0;
+        Set<String> contents = new HashSet<>();
+        for (Candidate candidate : candidates) {
+            PaperScope scope = candidate.scope();
+            int cost = encoding.countTokens(candidate.quote());
+            if (tokens + cost > properties.getEvidenceTokenBudget()
+                    || !contents.add(scope.paperId() + "\n" + candidate.quote())) continue;
             result.add(new Evidence("E" + (result.size() + 1), scope.paperId(), scope.title(), scope.indexVersion(),
-                    scope.esIndexName(), chunkId, start, end, quote, scope.fileUrl()));
+                    scope.esIndexName(), candidate.chunkId(), candidate.start(), candidate.end(), candidate.quote(), scope.fileUrl()));
             tokens += cost;
             if (result.size() >= properties.getMaxEvidence()) break;
         }
-        return result;
+        return new RetrievalResult(candidates.stream().map(Candidate::chunkId).toList(), result);
     }
+
+    private record Candidate(PaperScope scope, String chunkId, int start, int end, String quote) { }
 
     private JsonNode search(String path, Object body) {
         //1、显式拒绝分片失败和超时的部分结果，避免把不完整检索标为完成

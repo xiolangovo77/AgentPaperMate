@@ -13,6 +13,7 @@
         <result column="status" property="status" />
         <result column="scope_version" property="scopeVersion" />
         <result column="papers_snapshot" property="papersSnapshot" />
+        <result column="retrieval_snapshot" property="retrievalSnapshot" />
         <result column="evidence_snapshot" property="evidenceSnapshot" />
         <result column="model_name" property="modelName" />
         <result column="model_config" property="modelConfig" />

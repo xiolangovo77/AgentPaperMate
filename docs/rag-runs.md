@@ -22,8 +22,8 @@
 创建事务：Run(pending) + user 消息 + 会话 active_run_id
 领取事务：Run(running) + start_time/deadline + run_started
 短事务：retrieval_started
-事务外：问题 query Embedding → ES BM25 → ES kNN → Java RRF、去重和预算筛选
-短事务：evidence_snapshot + retrieval_completed
+事务外：问题 query Embedding → ES BM25 → ES kNN → Java RRF、去重 → 保留完整候选 → 预算筛选
+短事务：retrieval_snapshot + evidence_snapshot + retrieval_completed
 事务外：qwen3.7-plus 回答 → JSON 格式及引用校验
 完成事务：assistant 消息 + message_citation + Run(completed) + run_completed + 释放会话占用
 ```
@@ -81,6 +81,8 @@ BM25 和 kNN 都按用户归属及逐篇快照过滤。kNN 的过滤位于 `knn.
 
 两路各取 20 个候选，以 RRF（常数 60）融合并去重，最多登记 8 条证据，原文总预算 6000 个 cl100k_base 估算 Token。当前只使用有可靠物理页码且 `lowConfidence=false` 的片段，以匹配引用表非空页码约束。没有有效证据时直接保存明确的无法确认说明，不调用回答模型、不生成引用。
 
+`agent_run.retrieval_snapshot` 保存范围、版本及来源校验通过的完整 RRF 有序候选 Chunk ID 数组，采集发生在证据 Token、最大证据数量和相同原文筛选之前，候选排名不受最终最多 8 条证据的限制。`evidence_snapshot` 继续保存预算筛选后的最终证据。两份快照与 `retrieval_completed` 在同一短事务提交，取消或超时后的结果不得迟到写入；后续模型失败不会清空已提交的快照。`retrieval_snapshot` 为 SQL `NULL` 表示未采集或未提交，JSON `[]` 表示检索完成但没有候选；历史任务不回填，也不能由最终证据还原筛选前候选。
+
 模型只输出 `answer` 和 `evidenceIds`。服务端检查 ID 属于本次证据、正文 `[E1]` 标记与结构化 ID 一致，随后补齐论文、页码、文件 URL 和检索原文快照。无效引用直接使任务失败，不发布原始模型正文。历史仅纳入最多 6 条有长度预算的用户问题以理解追问，旧助手答案不作为新证据。
 
 这是来源及格式校验，不是对每个论断的自动语义证明。`quoted_text` 保存当前解析器提取的片段正文，解析质量仍受 PDF 提取结果影响。当前实现没有自动修复回答、自动重试模型或断点续跑。
@@ -103,7 +105,7 @@ extra_data = beforePaperIds、afterPaperIds、scopeVersion、paperId、action
 
 `pending` 来自数据库队列，提交成功后即使进程退出仍可被下一实例领取。领取后没有自动重试；崩溃遗留的 `running` 任务在持久化的 `deadline` 到达后由扫描器标记 `timeout` 并释放会话占用，避免新实例误杀其他实例正在执行的任务。取消尽可能中止底层请求；不支持中止的调用可以继续消耗上游资源，但其结果不能写入任务。
 
-无需新增表或迁移：使用现有 `agent_run`、`run_event`、`chat_message`、`message_citation` 及其唯一索引。已有数据库必须已执行仓库当前建表脚本。
+使用现有 `agent_run`、`run_event`、`chat_message`、`message_citation` 及其唯一索引。已有数据库的 `agent_run` 必须包含新增的 `retrieval_snapshot JSON NULL` 字段；新建数据库使用仓库当前建表脚本。本次接入只负责快照采集和持久化，现有前端详情及 SSE 接口返回结构保持不变。
 
 离线验证命令（PowerShell 中保留参数引号）：
 

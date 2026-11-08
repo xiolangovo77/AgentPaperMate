@@ -3,6 +3,7 @@ package com.ecnu.agentpapermate.service.run.rag;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
+import com.ecnu.agentpapermate.rag.model.RetrievalResult;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
@@ -151,15 +152,16 @@ public class RunStore {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public boolean retrieved(Long id, List<Evidence> evidence) {
-        //1、保存证据快照和检索完成事件，取消或超时后不再推进阶段
+    public boolean retrieved(Long id, RetrievalResult retrieval) {
+        //1、原子保存筛选前候选、最终证据和完成事件，取消或超时后不再推进阶段
         AgentRun run = live(id);
         if (run == null) return false;
         if (run.getEventSeq() != 2L) throw new IllegalStateException("检索阶段顺序错误");
         verifyAccess(run);
-        run.setEvidenceSnapshot(json.write(evidence));
+        run.setRetrievalSnapshot(json.write(retrieval.retrievedChunkIds()));
+        run.setEvidenceSnapshot(json.write(retrieval.evidence()));
         changed(runs.updateById(run));
-        append(run, "retrieval_completed", Map.of("evidenceCount", evidence.size()));
+        append(run, "retrieval_completed", Map.of("evidenceCount", retrieval.evidence().size()));
         return true;
     }
 

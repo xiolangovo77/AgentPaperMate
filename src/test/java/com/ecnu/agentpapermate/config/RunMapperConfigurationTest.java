@@ -26,6 +26,16 @@ class RunMapperConfigurationTest {
         String prefix = "com.ecnu.agentpapermate.mapper.";
         String sql = configuration.getMappedStatement(prefix + "AgentRunMapper.selectForUpdate").getBoundSql(Map.of("id", 1L)).getSql();
         assertTrue(sql.contains("FOR UPDATE")); assertTrue(sql.contains("is_delete = 0"));
+        assertTrue(configuration.getResultMap(prefix + "AgentRunMapper.BaseResultMap").getResultMappings().stream()
+                .anyMatch(mapping -> "retrieval_snapshot".equals(mapping.getColumn())
+                        && "retrievalSnapshot".equals(mapping.getProperty())));
+        var run = new com.ecnu.agentpapermate.entity.model.AgentRun();
+        run.setId(40L); run.setRetrievalSnapshot("[\"chunk1\",\"chunk2\"]");
+        var update = configuration.getMappedStatement(prefix + "AgentRunMapper.updateById")
+                .getBoundSql(Map.of("et", run));
+        assertTrue(update.getSql().contains("retrieval_snapshot=?"));
+        assertTrue(update.getParameterMappings().stream()
+                .anyMatch(mapping -> "et.retrievalSnapshot".equals(mapping.getProperty())));
         for (String mapper : new String[]{"AgentRunMapper", "ChatMessageMapper", "MessageCitationMapper", "RunEventMapper"}) {
             assertTrue(configuration.hasStatement(prefix + mapper + ".insert"));
             assertTrue(configuration.hasStatement(prefix + mapper + ".updateById"));

@@ -52,7 +52,7 @@ class RagHttpTest {
                         Map.of("text_index", 0, "embedding", List.of(0.1, 0.2, 0.3)))), "usage", Map.of("total_tokens", 3));
             } else if (path.equals("/paper_test/_search")) {
                 response = Map.of("timed_out", timedOut, "_shards", Map.of("failed", 0), "hits", Map.of("hits", List.of(hit("chunk1", "原文", true))));
-            } else if (path.equals("/api/v1/services/aigc/text-generation/generation")) {
+            } else if (path.equals("/api/v1/services/aigc/multimodal-generation/generation")) {
                 response = Map.of("request_id", "test", "output", Map.of("choices", List.of(Map.of("finish_reason", "stop",
                         "message", Map.of("role", "assistant", "content", "{\"answer\":\"答案[E1]\",\"evidenceIds\":[\"E1\"]}")))),
                         "usage", Map.of("input_tokens", 10, "output_tokens", 20, "total_tokens", 30));
@@ -94,7 +94,9 @@ class RagHttpTest {
 
     @Test
     void nativeQueryEmbeddingTwoFilteredSearchesAndNativeChatRoundTrip() {
-        var evidence = retriever.retrieve(run);
+        var retrieval = retriever.retrieve(run);
+        var evidence = retrieval.evidence();
+        assertEquals(List.of("chunk1"), retrieval.retrievedChunkIds());
         assertEquals(1, evidence.size());
         assertEquals("原文", evidence.getFirst().quotedText());
         JsonNode embedding = requests.get("/api/v1/services/embeddings/text-embedding/text-embedding").getFirst();
@@ -110,12 +112,12 @@ class RagHttpTest {
         assertEquals(3, searches.getLast().at("/knn/query_vector").size());
         var answer = generator.generate(run, evidence, List.of("前一个问题"));
         assertEquals("答案[E1]", answer.content()); assertEquals(10, answer.inputTokens()); assertEquals(20, answer.outputTokens());
-        var chat = requests.get("/api/v1/services/aigc/text-generation/generation").getFirst();
+        var chat = requests.get("/api/v1/services/aigc/multimodal-generation/generation").getFirst();
         assertEquals("qwen3.7-plus", chat.path("model").asText());
         assertEquals(2048, chat.at("/parameters/max_tokens").asInt());
         assertFalse(chat.at("/parameters/enable_search").asBoolean());
         assertEquals("system", chat.at("/input/messages/0/role").asText());
-        assertTrue(chat.at("/input/messages/1/content").asText().contains("原文"));
+        assertTrue(chat.at("/input/messages/1/content/0/text").asText().contains("原文"));
     }
 
     @Test
@@ -130,11 +132,60 @@ class RagHttpTest {
         var response = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("a", "第一段", true), hit("b", "第二段", true)))));
         var other = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("b", "第二段", true)))));
         var merged = retriever.fuse(20L, List.of(scope()), response, other);
-        assertEquals(2, merged.size()); assertEquals("b", merged.getFirst().chunkId());
-        assertEquals("E1", merged.getFirst().evidenceId());
+        assertEquals(List.of("b", "a"), merged.retrievedChunkIds());
+        assertEquals(2, merged.evidence().size()); assertEquals("b", merged.evidence().getFirst().chunkId());
+        assertEquals("E1", merged.evidence().getFirst().evidenceId());
         var unknown = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("c", "第三段", false)))));
-        assertTrue(retriever.fuse(20L, List.of(scope()), unknown).isEmpty());
+        var unknownResult = retriever.fuse(20L, List.of(scope()), unknown);
+        assertTrue(unknownResult.retrievedChunkIds().isEmpty());
+        assertTrue(unknownResult.evidence().isEmpty());
         assertThrows(IllegalStateException.class, () -> retriever.fuse(99L, List.of(scope()), response));
+    }
+
+    @Test
+    void candidateSnapshotKeepsFullRrfOrderBeyondEvidenceLimit() {
+        properties.setMaxEvidence(1);
+        var hits = new ArrayList<Object>();
+        for (int i = 0; i < 12; i++) hits.add(hit("chunk" + i, "quote " + i, true));
+        var response = mapper.valueToTree(Map.of("hits", Map.of("hits", hits)));
+        var duplicate = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(
+                hit("chunk11", "quote 11", true), hit("chunk11", "quote 11", true)))));
+        var result = retriever.fuse(20L, List.of(scope()), response, duplicate);
+        var expected = new ArrayList<String>();
+        expected.add("chunk11");
+        for (int i = 0; i < 11; i++) expected.add("chunk" + i);
+        assertEquals(expected, result.retrievedChunkIds());
+        assertEquals(1, result.evidence().size());
+        assertEquals("chunk11", result.evidence().getFirst().chunkId());
+    }
+
+    @Test
+    void tokenBudgetAndIdenticalTextOnlyFilterFinalEvidence() {
+        properties.setEvidenceTokenBudget(4);
+        var response = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(
+                hit("a", "large ".repeat(100), true), hit("b", "tiny", true), hit("c", "tiny", true)))));
+        var result = retriever.fuse(20L, List.of(scope()), response);
+        assertEquals(List.of("a", "b", "c"), result.retrievedChunkIds());
+        assertEquals(1, result.evidence().size());
+        assertEquals("b", result.evidence().getFirst().chunkId());
+        assertEquals("E1", result.evidence().getFirst().evidenceId());
+    }
+
+    @Test
+    void sourceValidationStillCoversCandidatesPastEvidenceLimit() {
+        properties.setMaxEvidence(1);
+        var foreign = mapper.valueToTree(hit("b", "foreign", true));
+        ((com.fasterxml.jackson.databind.node.ObjectNode) foreign.at("/_source/metadata")).put("ownerId", "99");
+        var response = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("a", "valid", true), foreign))));
+        assertThrows(IllegalStateException.class, () -> retriever.fuse(20L, List.of(scope()), response));
+    }
+
+    @Test
+    void emptySearchProducesRecordedEmptyCandidatesAndEvidence() {
+        var empty = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of())));
+        var result = retriever.fuse(20L, List.of(scope()), empty, empty);
+        assertTrue(result.retrievedChunkIds().isEmpty());
+        assertTrue(result.evidence().isEmpty());
     }
 
     @Test

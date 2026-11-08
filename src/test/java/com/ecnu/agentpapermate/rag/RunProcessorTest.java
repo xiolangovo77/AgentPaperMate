@@ -2,6 +2,7 @@ package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.rag.model.Answer;
+import com.ecnu.agentpapermate.rag.model.RetrievalResult;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.service.run.rag.RunProcessor;
 import com.ecnu.agentpapermate.service.run.rag.RunQueries;
@@ -42,7 +43,7 @@ class RunProcessorTest {
 
     @Test
     void cancellationAfterRetrievalPreventsModelCall() {
-        when(retriever.retrieve(run)).thenReturn(List.of(RunStoreTest.evidence()));
+        when(retriever.retrieve(run)).thenReturn(RunStoreTest.retrieval());
         when(store.retrieved(eq(1L), any())).thenReturn(false);
         processor.process(run);
         verifyNoInteractions(generator);
@@ -51,7 +52,7 @@ class RunProcessorTest {
 
     @Test
     void emptyEvidenceReturnsExplicitInsufficiencyWithoutModelCall() {
-        when(retriever.retrieve(run)).thenReturn(List.of());
+        when(retriever.retrieve(run)).thenReturn(new RetrievalResult(List.of(), List.of()));
         processor.process(run);
         var answer = ArgumentCaptor.forClass(Answer.class);
         verify(store).complete(eq(1L), answer.capture());
@@ -65,5 +66,19 @@ class RunProcessorTest {
         when(retriever.retrieve(run)).thenThrow(new RagCalls.RequestTimeout());
         processor.process(run);
         verify(store).fail(1L, "REQUEST_TIMEOUT", "外部服务请求超时", true);
+    }
+
+    @Test
+    void fullCandidatesAreSavedBeforeGeneratingWithOnlyFinalEvidence() {
+        var retrieval = RunStoreTest.retrieval();
+        when(retriever.retrieve(run)).thenReturn(retrieval);
+        when(queries.previousQuestions(run)).thenReturn(List.of());
+        when(generator.generate(run, retrieval.evidence(), List.of())).thenReturn(RunStoreTest.answer());
+        processor.process(run);
+        var order = inOrder(store, generator);
+        order.verify(store).retrieved(1L, retrieval);
+        order.verify(store).modelStarted(1L);
+        order.verify(generator).generate(run, retrieval.evidence(), List.of());
+        order.verify(store).complete(1L, RunStoreTest.answer());
     }
 }

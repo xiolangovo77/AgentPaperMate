@@ -41,8 +41,9 @@ public class RunProcessor {
         try {
             //1、提交检索开始事件后，执行问题向量化、ES 检索和证据融合
             if (!store.retrievalStarted(run.getId())) return;
-            List<Evidence> evidence = retriever.retrieve(run);
-            if (!store.retrieved(run.getId(), evidence)) return;
+            var retrieval = retriever.retrieve(run);
+            if (!store.retrieved(run.getId(), retrieval)) return;
+            List<Evidence> evidence = retrieval.evidence();
 
             //2、缺少可引用证据时给出明确说明，不让模型猜测或补齐答案
             Answer answer;

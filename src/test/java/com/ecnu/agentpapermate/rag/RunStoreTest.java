@@ -280,6 +280,8 @@ class RunStoreTest {
 
     private void runningAfterRetrieval() {
         run.setStatus("running"); run.setEventSeq(3L); run.setDeadline(LocalDateTime.now(clock).plusSeconds(10));
+        run.setExecutionPhase("evidence_ready");
+        run.setRetrievalSnapshot(json.write(retrieval().retrievedChunkIds()));
     }
 
     private RunCreateRequest request() {

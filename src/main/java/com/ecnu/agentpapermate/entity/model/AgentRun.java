@@ -71,6 +71,13 @@ public class AgentRun implements Serializable {
     private String status;
 
     /**
+     * 业务执行阶段：queued、ready、retrieving、evidence_ready、generating。
+     * 独立于事件序号；进入终态时保留最后阶段。
+     */
+    @TableField("execution_phase")
+    private String executionPhase;
+
+    /**
      * 创建任务时的会话资料范围版本快照
      */
     @TableField("scope_version")
@@ -150,7 +157,7 @@ public class AgentRun implements Serializable {
     private Integer toolCallCount;
 
     /**
-     * 已分配的最后一个进度事件序号
+     * 已分配的最后一个进度事件序号，仅用于事件排序和补发，不代表业务阶段
      */
     @TableField("event_seq")
     private Long eventSeq;

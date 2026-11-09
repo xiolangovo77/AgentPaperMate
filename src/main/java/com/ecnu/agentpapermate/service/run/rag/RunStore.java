@@ -110,6 +110,7 @@ public class RunStore {
         run.setSessionId(session.getId()); run.setUserId(userId); run.setRequestKey(request.getRequestKey());
         run.setUserQuery(request.getQuestion()); run.setRetryOfRunId(request.getRetryOfRunId());
         run.setExecutorType("rag"); run.setStatus("pending"); run.setScopeVersion(session.getScopeVersion());
+        run.setExecutionPhase("queued");
         run.setPapersSnapshot(json.write(scope)); run.setModelName(properties.getModel());
         run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2)));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);
@@ -134,6 +135,7 @@ public class RunStore {
         }
         //2、领取与开始事件一起提交，执行器只能在提交后调用外部服务
         run.setStatus("running"); run.setStartTime(now());
+        run.setExecutionPhase("ready");
         run.setDeadline(now().plusSeconds(properties.getRunTimeoutSeconds()));
         changed(runs.updateById(run));
         append(run, "run_started", Map.of("status", "running"));
@@ -145,8 +147,10 @@ public class RunStore {
         //1、只允许存活任务开始检索，重复执行不会重复写入开始事件
         AgentRun run = live(id);
         if (run == null) return false;
-        if (run.getEventSeq() != 1L) throw new IllegalStateException("检索阶段顺序错误");
+        requirePhase(run, "ready");
         verifyAccess(run);
+        run.setExecutionPhase("retrieving");
+        // append 同时持久化阶段和事件序号，与事件记录处于同一事务。
         append(run, "retrieval_started", Map.of());
         return true;
     }
@@ -156,10 +160,11 @@ public class RunStore {
         //1、原子保存筛选前候选、最终证据和完成事件，取消或超时后不再推进阶段
         AgentRun run = live(id);
         if (run == null) return false;
-        if (run.getEventSeq() != 2L) throw new IllegalStateException("检索阶段顺序错误");
+        requirePhase(run, "retrieving");
         verifyAccess(run);
         run.setRetrievalSnapshot(json.write(retrieval.retrievedChunkIds()));
         run.setEvidenceSnapshot(json.write(retrieval.evidence()));
+        run.setExecutionPhase("evidence_ready");
         changed(runs.updateById(run));
         append(run, "retrieval_completed", Map.of("evidenceCount", retrieval.evidence().size()));
         return true;
@@ -170,7 +175,11 @@ public class RunStore {
         //1、调用模型前再次核对任务状态和权限，记录实际发起的模型轮数
         AgentRun run = live(id);
         if (run == null) return false;
+        // generating 允许后续受控修复再次调用模型，每次仍累计轮数。
+        requirePhase(run, "evidence_ready", "generating");
         verifyAccess(run);
+        requireEvidence(run);
+        run.setExecutionPhase("generating");
         run.setStepCount(run.getStepCount() + 1);
         changed(runs.updateById(run));
         return true;
@@ -181,9 +190,10 @@ public class RunStore {
         //1、加锁后重新确认任务仍在运行，过期或取消结果不得迟到写入
         AgentRun run = live(id);
         if (run == null) return false;
-        if (run.getEventSeq() != 3L) throw new IllegalStateException("任务尚未完成检索");
+        // 空检索结果可在 evidence_ready 阶段直接给出无法确认的回答。
+        requirePhase(run, "evidence_ready", "generating");
         verifyAccess(run);
-        List<Evidence> evidence = json.evidence(run.getEvidenceSnapshot());
+        List<Evidence> evidence = requireEvidence(run);
         AnswerValidator.validate(answer, evidence);
 
         //2、先创建助手消息，再把实际引用的证据原文绑定到助手消息
@@ -273,6 +283,25 @@ public class RunStore {
         return run;
     }
 
+    private void requirePhase(AgentRun run, String... allowed) {
+        if (!Arrays.asList(allowed).contains(run.getExecutionPhase())) {
+            throw new IllegalStateException("任务执行阶段不允许此操作：" + run.getExecutionPhase());
+        }
+    }
+
+    private List<Evidence> requireEvidence(AgentRun run) {
+        // null 表示未完成检索，[] 表示检索完成但没有证据，两者不能混用。
+        if (run.getRetrievalSnapshot() == null || run.getEvidenceSnapshot() == null) {
+            throw new IllegalStateException("任务尚未保存检索及证据快照");
+        }
+        json.retrievedChunkIds(run.getRetrievalSnapshot());
+        List<Evidence> evidence = json.evidence(run.getEvidenceSnapshot());
+        if (evidence == null || evidence.stream().anyMatch(Objects::isNull)) {
+            throw new IllegalStateException("任务证据快照必须是有效数组");
+        }
+        return evidence;
+    }
+
     private void finish(AgentRun run, String status, String code, String error, Map<String, Object> result) {
         //1、更新终态、结束时间和用量，整个方法必须在持有任务锁的事务内调用
         run.setStatus(status); run.setEndTime(now()); run.setErrorCode(code); run.setErrorMessage(error);
@@ -286,7 +315,7 @@ public class RunStore {
     }
 
     private void append(AgentRun run, String type, Object payload) {
-        //1、持有任务行锁时分配序号，事件写入失败会回滚序号及同事务状态
+        //1、序号只用于事件排序和补发；事件写入失败会回滚序号及同事务业务阶段
         run.setEventSeq(run.getEventSeq() + 1);
         changed(runs.updateById(run));
         RunEvent event = new RunEvent();

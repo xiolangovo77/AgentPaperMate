@@ -100,6 +100,7 @@ CREATE TABLE agent_run (
     user_query TEXT NOT NULL COMMENT '本次原始问题，用于执行和幂等请求核对',
     executor_type VARCHAR(16) NOT NULL DEFAULT 'rag' COMMENT 'rag固定流程、agent智能体',
     status VARCHAR(16) NOT NULL DEFAULT 'pending' COMMENT 'pending、running、completed、failed、cancelled、timeout',
+    execution_phase VARCHAR(32) NOT NULL DEFAULT 'queued' COMMENT '业务阶段：queued、ready、retrieving、evidence_ready、generating；终态保留最后阶段',
     scope_version INT UNSIGNED NOT NULL COMMENT '创建任务时的会话资料范围版本快照',
     papers_snapshot JSON NOT NULL COMMENT '服务端生成的论文ID、索引版本、ES索引及模型配置快照数组',
     retrieval_snapshot JSON NULL COMMENT 'RRF融合去重后、证据Token和数量筛选前的有序Chunk ID数组，不存向量',

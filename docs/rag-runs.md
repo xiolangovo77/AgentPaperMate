@@ -38,12 +38,12 @@
 | --- | --- | --- |
 | `create` | 新任务 | `queued` |
 | `start` | `status=pending` | `ready` |
-| `retrievalStarted` | `ready` | `retrieving` |
+| `retrievalStarted` | `ready`、`evidence_ready`、`generating` | `retrieving` |
 | `retrieved` | `retrieving` | `evidence_ready` |
 | `modelStarted` | `evidence_ready`、`generating` | `generating` |
 | `complete` | `evidence_ready`、`generating` | 保留最后阶段，`status=completed` |
 
-阶段检查在 Run 行锁内执行。检索开始的阶段更新与开始事件一起提交；检索完成的两份快照、阶段更新和完成事件一起提交。重复开始检索、未开始就提交结果、未准备证据就完成都会被拒绝。模型再次调用仍累计 `step_count`，此处不新增自动修复或重试。
+阶段检查在 Run 行锁内执行。检索开始的阶段更新与开始事件一起提交；检索完成的两份快照、阶段更新和完成事件一起提交。可在上一轮证据已就绪或模型已调用后开始下一轮；检索进行中重复开始、未开始就提交结果、未准备证据就完成仍会被拒绝。模型再次调用仍累计 `step_count`，此处不新增自动修复或重试。
 
 调用模型和完成回答前均检查检索、证据快照：SQL null 或 JSON null 不表示有效空结果，JSON 空数组 `[]` 才表示检索完成但没有结果。空结果允许跳过模型，从 `evidence_ready` 直接保存无法确认的回答。权限、截止时间和引用校验继续生效。失败、取消和超时保留最后业务阶段，便于定位停止位置。
 
@@ -122,7 +122,7 @@
 }
 ```
 
-- `retrieved_chunk_ids` 保留数据库 `retrieval_snapshot` 的候选顺序；`final_evidence` 来自完整的最终证据快照，其中 `text` 对应 `quotedText`。`citations` 只包含助手实际引用的条目，不能用全部最终证据代替。
+- `retrieved_chunk_ids` 返回整个 Run 已成功保存的检索候选去重并集，按首次出现顺序保存；`final_evidence` 来自完整的最终证据快照，其中 `text` 对应 `quotedText`。`citations` 只包含助手实际引用的条目，不能用全部最终证据代替。
 - SQL `NULL` 快照导出为 null，不从其他字段补造；已采集空数组导出为 `[]`。损坏、类型不符或重复 ID 的候选快照作为数据异常处理，不静默变成空检索。
 - `latency_ms` 是终态任务的 `end_time - start_time`，含检索、模型及工具执行，不含排队和脚本轮询；未进入终态、尚未开始执行或起止时间不完整时为 null。
 - 已完成任务返回已发布的答案及引用；未完成、失败、超时或取消的任务返回 `answer: null`、`citations: null`，但保留已经提交的检索和最终证据快照以及错误信息。
@@ -153,18 +153,36 @@ data:{"runId":"123","eventId":"3","type":"retrieval_completed","timestamp":"2026
 
 - `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节；topK 为每路候选数量，构造时限制 1 至 100，执行时还必须不超过 `rag.retrieval-top-k`。该配置同时是固定 RAG 的默认值和 Agent 的上限；超限请求在调用外部服务前报错，不静默截断。融合后候选可能多于 topK。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
 - `RetrievalContext(userId, allowedScopes, deadline)`：仅由后端根据当前 Run 构建，不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
-- Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，最后一次 ES 请求返回后再检查一次；普通会话资料调整不会替换启动时快照，删除或撤权则阻止返回结果。
+- Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，`RunStore` 在保存证据和发布答案前再次验权；普通会话资料调整不会替换启动时快照，删除或撤权则阻止继续访问或发布结果。
 - 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。旧的 `call(AgentRun, operation)` 委托给这个入口，兼容聊天模型调用。
 
 固定 RAG 在 `RunProcessor` 中这样调用：
 
 ```java
 var request = new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
-var context = new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
-var retrieval = retriever.retrieve(request, context);
+var context = new AgentRunContext(run.getId(),
+        new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline()));
+var candidates = retriever.retrieve(request, context.getRetrievalContext());
+var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
 ```
 
-后续 Agent 可复用该上下文，通过 `new RetrievalRequest("实验中的消融设置和结果", List.of(paperId), 10)` 发起补充查询；paperId 必须属于上下文范围。每次检索均不修改 Run 原始问题。本次未新增工具接口或多轮证据合并，证据 ID 仍按单次检索分配，不能直接将多次结果拼接为同一 Run 的证据集合。
+后续 Agent 可复用该上下文，通过 `new RetrievalRequest("实验中的消融设置和结果", List.of(paperId), 10)` 发起补充查询；paperId 必须属于上下文范围，topK 不得超过配置上限。每次检索均不修改 Run 原始问题。
+
+### Run 级证据登记
+
+`AgentRunContext` 每个 Run 创建一次，包含不可替换的 `RetrievalContext` 和 `EvidenceRegistry`，不作为 Spring 单例。后续各工具共享这个运行上下文，不能每次工具调用都重建注册器。
+
+`RagRetriever` 返回 `RetrievalCandidates`：本轮完整的有序候选 Chunk ID 和预算筛选后未编号的 `EvidenceCandidate`。执行层调用 `context.getEvidenceRegistry().registerRetrieval()`，先登记原文，再累计候选 ID，得到 `RetrievalResult`：其中 `retrievedChunkIds` 是整个 Run 的候选并集，`evidence` 仅为本轮登记的证据子集，再将其交给 `RunStore.retrieved()` 和回答生成器。现有检索候选快照、证据快照和引用落库结构保持兼容。
+
+注册器以论文 ID、ES 索引、索引版本、尝试令牌和 Chunk ID 识别来源，同时核对候选所属的完整后端快照。首次登记分配 `E1`、`E2` 等 ID；相同来源、原文和页码复用旧 ID；同一来源原文或定位不同则报错，不能覆盖已登记证据。整批校验通过后才分配编号，本批返回结果也去重。不同 Run 各自从 E1 开始。注册器只递增编号，不提供删除或重置操作。
+
+例如第一次检索 A、B 得到 E1、E2；第二次检索 B、C 返回 E2、E3，注册器全集为 E1、E2、E3。`snapshot()` 返回不可修改的全集快照，`size()` 返回已登记数量；全集不自动等同于最终回答实际使用的证据。
+
+`EvidenceRegistry` 内部分别保存候选 ID 集合和已登记的原文证据。调用方通过 `context.getEvidenceRegistry()` 直接登记检索结果或读取候选集合；`AgentRunContext` 仅持有注册器，不提供同名委托方法。注册器的 `getRetrievedChunkIds()` 返回不可修改的全 Run 候选快照。例如第一轮 `[A,B,C]`、第二轮 `[B,D]`，累计为 `[A,B,C,D]`；本轮没有证据、只有候选时仍累计候选，本轮候选为空时保留已有集合。不用证据反推候选，不把所有候选都作为可引用证据。
+
+`RunStore.retrieved()` 在行锁内把传入候选与数据库已有数组再次合并，防止只传本轮候选或较旧的累计快照时覆盖前面的记录。每轮按 `retrievalStarted → retrieve → registerRetrieval → retrieved` 执行，已保存的轮次在后续失败、取消或超时后仍保留；终态或截止时间之后到达的新结果不写入。`retrieval_completed.payload.candidateCount` 为累计不重复候选数，`evidenceCount` 为本轮证据数。
+
+当前固定 RAG 仍只检索一次，候选顺序与数量保持原单轮语义。后续 Agent 执行器可复用上述串行流程，最终模型输入选择另行接入；`evidence_snapshot` 保存本轮选择的证据，不自动保存注册器全集。章节和页面工具后续需要提供稳定来源定位后复用注册器。编号和内存候选集合不支持重启后恢复同一个 Run，不新增数据库字段或表。
 
 创建任务时锁定聊天室，保存论文 ID、物理 ES 索引、有效索引版本、入库尝试令牌及向量配置。选中论文必须具有可用且与当前 Embedding 模型兼容的索引；最多 50 篇。任务执行期间普通增删资料只影响后续任务；论文实际删除或撤权会在阶段边界及最终写入前阻止继续使用。
 
@@ -172,7 +190,7 @@ BM25 和 kNN 都按用户归属及逐篇快照过滤。kNN 的过滤位于 `knn.
 
 两路各取 20 个候选，以 RRF（常数 60）融合并去重，最多登记 8 条证据，原文总预算 6000 个 cl100k_base 估算 Token。当前只使用有可靠物理页码且 `lowConfidence=false` 的片段，以匹配引用表非空页码约束。没有有效证据时直接保存明确的无法确认说明，不调用回答模型、不生成引用。
 
-`agent_run.retrieval_snapshot` 保存范围、版本及来源校验通过的完整 RRF 有序候选 Chunk ID 数组，采集发生在证据 Token、最大证据数量和相同原文筛选之前，候选排名不受最终最多 8 条证据的限制。`evidence_snapshot` 继续保存预算筛选后的最终证据。两份快照与 `retrieval_completed` 在同一短事务提交，取消或超时后的结果不得迟到写入；后续模型失败不会清空已提交的快照。`retrieval_snapshot` 为 SQL `NULL` 表示未采集或未提交，JSON `[]` 表示检索完成但没有候选；历史任务不回填，也不能由最终证据还原筛选前候选。
+`agent_run.retrieval_snapshot` 保存全 Run 各轮范围、版本及来源校验通过的 RRF 候选 Chunk ID 去重并集，采集位置在证据 Token、最大证据数量和相同原文筛选之前。其长度用于候选数量统计，与 Gold 的交集用于全部候选 Gold 覆盖率。单轮数组仍保持 RRF 排名；多轮按首次出现顺序追加，不构成跨轮相关度排名，不能无说明地将其前5/10条和固定 RAG 的排名指标直接比较。`evidence_snapshot` 保存本轮选用的证据，两份快照与 `retrieval_completed` 在同一短事务提交。SQL `NULL` 表示未采集或未提交，JSON `[]` 表示已保存至少一轮检索但累计没有候选；后续空轮次不清空历史集合。取消或超时后的新结果不得迟到写入；后续模型失败不会清空已提交的快照，历史任务不补填。
 
 模型只输出 `answer` 和 `evidenceIds`。服务端检查 ID 属于本次证据、正文 `[E1]` 标记与结构化 ID 一致，随后补齐论文、页码、文件 URL 和检索原文快照。无效引用直接使任务失败，不发布原始模型正文。历史仅纳入最多 6 条有长度预算的用户问题以理解追问，旧助手答案不作为新证据。
 

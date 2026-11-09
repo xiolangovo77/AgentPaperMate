@@ -148,7 +148,8 @@ public class RunStore {
         //1、只允许存活任务开始检索，重复执行不会重复写入开始事件
         AgentRun run = live(id);
         if (run == null) return false;
-        requirePhase(run, "ready");
+        // 后续轮次可从证据就绪或模型已调用阶段开始；retrieving 仍拒绝重复开始。
+        requirePhase(run, "ready", "evidence_ready", "generating");
         verifyAccess(run);
         run.setExecutionPhase("retrieving");
         // append 同时持久化阶段和事件序号，与事件记录处于同一事务。
@@ -158,16 +159,23 @@ public class RunStore {
 
     @Transactional(rollbackFor = Exception.class)
     public boolean retrieved(Long id, RetrievalResult retrieval) {
-        //1、原子保存筛选前候选、最终证据和完成事件，取消或超时后不再推进阶段
+        //1、原子累计筛选前候选、保存本轮证据和完成事件，取消或超时后不再推进阶段
         AgentRun run = live(id);
         if (run == null) return false;
         requirePhase(run, "retrieving");
         verifyAccess(run);
-        run.setRetrievalSnapshot(json.write(retrieval.retrievedChunkIds()));
+        // 在行锁内再合并一次，避免调用方只传本轮候选或传入较旧的累计快照时覆盖历史。
+        var retrievedChunkIds = new LinkedHashSet<String>();
+        if (run.getRetrievalSnapshot() != null) {
+            retrievedChunkIds.addAll(json.retrievedChunkIds(run.getRetrievalSnapshot()));
+        }
+        retrievedChunkIds.addAll(retrieval.retrievedChunkIds());
+        run.setRetrievalSnapshot(json.write(List.copyOf(retrievedChunkIds)));
         run.setEvidenceSnapshot(json.write(retrieval.evidence()));
         run.setExecutionPhase("evidence_ready");
         changed(runs.updateById(run));
-        append(run, "retrieval_completed", Map.of("evidenceCount", retrieval.evidence().size()));
+        append(run, "retrieval_completed", Map.of("evidenceCount", retrieval.evidence().size(),
+                "candidateCount", retrievedChunkIds.size()));
         return true;
     }
 

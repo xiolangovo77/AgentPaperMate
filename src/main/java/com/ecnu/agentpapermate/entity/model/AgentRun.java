@@ -90,7 +90,7 @@ public class AgentRun implements Serializable {
     private String papersSnapshot;
 
     /**
-     * RRF 融合去重后、证据 Token 和数量筛选前的有序 Chunk ID 数组，不存向量。
+     * 全 Run 各轮 RRF 融合后、证据预算筛选前的 Chunk ID 并集，按首次出现顺序保存，不存向量。
      * null 表示未采集，JSON 空数组表示检索成功但没有候选。
      */
     @TableField("retrieval_snapshot")

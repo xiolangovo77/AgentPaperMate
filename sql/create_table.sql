@@ -103,7 +103,7 @@ CREATE TABLE agent_run (
     execution_phase VARCHAR(32) NOT NULL DEFAULT 'queued' COMMENT '业务阶段：queued、ready、retrieving、evidence_ready、generating；终态保留最后阶段',
     scope_version INT UNSIGNED NOT NULL COMMENT '创建任务时的会话资料范围版本快照',
     papers_snapshot JSON NOT NULL COMMENT '服务端生成的论文ID、索引版本、ES索引及模型配置快照数组',
-    retrieval_snapshot JSON NULL COMMENT 'RRF融合去重后、证据Token和数量筛选前的有序Chunk ID数组，不存向量',
+    retrieval_snapshot JSON NULL COMMENT '全Run各轮RRF候选的去重并集，证据预算筛选前，按首次出现顺序保存，不存向量',
     evidence_snapshot JSON NULL COMMENT '实际用于生成回答的最终证据清单，保存来源定位与原文摘录，不存向量',
     model_name VARCHAR(128) NOT NULL COMMENT '本次回答模型标识',
     model_config JSON NULL COMMENT '温度、输出限制等非敏感模型参数',

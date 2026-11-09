@@ -3,7 +3,7 @@ package com.ecnu.agentpapermate.rag.model;
 import java.util.HashSet;
 import java.util.List;
 
-/** 同一次检索的预算筛选前有序候选及筛选后的最终证据。 */
+/** 执行层登记后的结果：全 Run 候选去重并集（首次出现顺序）及本轮已登记的证据子集。 */
 public record RetrievalResult(List<String> retrievedChunkIds, List<Evidence> evidence) {
     public RetrievalResult {
         retrievedChunkIds = List.copyOf(retrievedChunkIds);

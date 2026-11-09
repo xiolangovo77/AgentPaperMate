@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.support.ai.RagCalls;
+import com.ecnu.agentpapermate.agent.context.AgentRunContext;
 import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.ecnu.agentpapermate.service.PaperService;
@@ -42,6 +43,7 @@ class RagHttpTest {
     private RestClient es;
     private RagRetriever retriever;
     private RagAnswerGenerator generator;
+    private AgentRunContext runContext;
     private RunStore store;
     private volatile boolean timedOut;
 
@@ -92,6 +94,7 @@ class RagHttpTest {
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
+        runContext = new AgentRunContext(run.getId(), retrievalContext());
     }
 
     private RetrievalRequest retrievalRequest() {
@@ -111,7 +114,7 @@ class RagHttpTest {
 
     @Test
     void nativeQueryEmbeddingTwoFilteredSearchesAndNativeChatRoundTrip() {
-        var retrieval = retriever.retrieve(retrievalRequest(), retrievalContext());
+        var retrieval = runContext.getEvidenceRegistry().registerRetrieval(retriever.retrieve(retrievalRequest(), retrievalContext()));
         var evidence = retrieval.evidence();
         assertEquals(List.of("chunk1"), retrieval.retrievedChunkIds());
         assertEquals(1, evidence.size());
@@ -149,13 +152,14 @@ class RagHttpTest {
     void rrfDeduplicatesAndRejectsForeignSourcesAndUnknownPages() {
         var response = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("a", "第一段", true), hit("b", "第二段", true)))));
         var other = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("b", "第二段", true)))));
-        var merged = retriever.fuse(20L, List.of(scope()), response, other);
+        var merged = runContext.getEvidenceRegistry().registerRetrieval(retriever.fuse(20L, List.of(scope()), response, other));
         assertEquals(List.of("b", "a"), merged.retrievedChunkIds());
         assertEquals(2, merged.evidence().size()); assertEquals("b", merged.evidence().getFirst().chunkId());
         assertEquals("E1", merged.evidence().getFirst().evidenceId());
         var unknown = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(hit("c", "第三段", false)))));
-        var unknownResult = retriever.fuse(20L, List.of(scope()), unknown);
-        assertTrue(unknownResult.retrievedChunkIds().isEmpty());
+        var unknownResult = runContext.getEvidenceRegistry().registerRetrieval(retriever.fuse(20L, List.of(scope()), unknown));
+        // 同一个 Run 的后续空检索不清空此前已累计的候选。
+        assertEquals(merged.retrievedChunkIds(), unknownResult.retrievedChunkIds());
         assertTrue(unknownResult.evidence().isEmpty());
         assertThrows(IllegalStateException.class, () -> retriever.fuse(99L, List.of(scope()), response));
     }
@@ -168,7 +172,7 @@ class RagHttpTest {
         var response = mapper.valueToTree(Map.of("hits", Map.of("hits", hits)));
         var duplicate = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(
                 hit("chunk11", "quote 11", true), hit("chunk11", "quote 11", true)))));
-        var result = retriever.fuse(20L, List.of(scope()), response, duplicate);
+        var result = runContext.getEvidenceRegistry().registerRetrieval(retriever.fuse(20L, List.of(scope()), response, duplicate));
         var expected = new ArrayList<String>();
         expected.add("chunk11");
         for (int i = 0; i < 11; i++) expected.add("chunk" + i);
@@ -182,7 +186,7 @@ class RagHttpTest {
         properties.setEvidenceTokenBudget(4);
         var response = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of(
                 hit("a", "large ".repeat(100), true), hit("b", "tiny", true), hit("c", "tiny", true)))));
-        var result = retriever.fuse(20L, List.of(scope()), response);
+        var result = runContext.getEvidenceRegistry().registerRetrieval(retriever.fuse(20L, List.of(scope()), response));
         assertEquals(List.of("a", "b", "c"), result.retrievedChunkIds());
         assertEquals(1, result.evidence().size());
         assertEquals("b", result.evidence().getFirst().chunkId());
@@ -201,7 +205,7 @@ class RagHttpTest {
     @Test
     void emptySearchProducesRecordedEmptyCandidatesAndEvidence() {
         var empty = mapper.valueToTree(Map.of("hits", Map.of("hits", List.of())));
-        var result = retriever.fuse(20L, List.of(scope()), empty, empty);
+        var result = runContext.getEvidenceRegistry().registerRetrieval(retriever.fuse(20L, List.of(scope()), empty, empty));
         assertTrue(result.retrievedChunkIds().isEmpty());
         assertTrue(result.evidence().isEmpty());
     }

@@ -4,6 +4,8 @@ import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
 import com.ecnu.agentpapermate.rag.model.RetrievalResult;
+import com.ecnu.agentpapermate.rag.model.RetrievalCandidates;
+import com.ecnu.agentpapermate.rag.model.EvidenceCandidate;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.dto.run.RunCreateRequest;
@@ -293,4 +295,8 @@ class RunStoreTest {
     static Evidence evidence() { return new Evidence("E1", 30L, "Paper", 1, "paper_test", "chunk1", 2, 3, "原文", "https://files.example/paper.pdf"); }
     static Answer answer() { return new Answer("答案[E1]", List.of("E1")); }
     static RetrievalResult retrieval() { return new RetrievalResult(List.of("chunk1", "chunk2"), List.of(evidence())); }
+    static RetrievalCandidates candidates() {
+        return new RetrievalCandidates(List.of("chunk1", "chunk2"),
+                List.of(new EvidenceCandidate(scope(), "chunk1", 2, 3, "原文")));
+    }
 }

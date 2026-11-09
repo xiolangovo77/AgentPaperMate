@@ -2,7 +2,7 @@ package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.rag.model.Answer;
-import com.ecnu.agentpapermate.rag.model.RetrievalResult;
+import com.ecnu.agentpapermate.rag.model.RetrievalCandidates;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.service.run.rag.RunProcessor;
 import com.ecnu.agentpapermate.service.run.rag.RunQueries;
@@ -51,7 +51,7 @@ class RunProcessorTest {
 
     @Test
     void cancellationAfterRetrievalPreventsModelCall() {
-        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.retrieval());
+        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.candidates());
         when(store.retrieved(eq(1L), any())).thenReturn(false);
         processor.process(run);
         verifyNoInteractions(generator);
@@ -60,7 +60,7 @@ class RunProcessorTest {
 
     @Test
     void emptyEvidenceReturnsExplicitInsufficiencyWithoutModelCall() {
-        when(retriever.retrieve(any(), any())).thenReturn(new RetrievalResult(List.of(), List.of()));
+        when(retriever.retrieve(any(), any())).thenReturn(new RetrievalCandidates(List.of(), List.of()));
         processor.process(run);
         var answer = ArgumentCaptor.forClass(Answer.class);
         verify(store).complete(eq(1L), answer.capture());
@@ -79,7 +79,7 @@ class RunProcessorTest {
     @Test
     void fullCandidatesAreSavedBeforeGeneratingWithOnlyFinalEvidence() {
         var retrieval = RunStoreTest.retrieval();
-        when(retriever.retrieve(any(), any())).thenReturn(retrieval);
+        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.candidates());
         when(queries.previousQuestions(run)).thenReturn(List.of());
         when(generator.generate(run, retrieval.evidence(), List.of())).thenReturn(RunStoreTest.answer());
         processor.process(run);

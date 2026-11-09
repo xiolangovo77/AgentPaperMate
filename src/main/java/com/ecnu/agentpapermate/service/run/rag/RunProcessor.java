@@ -4,6 +4,7 @@ import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
+import com.ecnu.agentpapermate.agent.context.AgentRunContext;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
@@ -49,8 +50,10 @@ public class RunProcessor {
             //1、提交检索开始事件后，执行问题向量化、ES 检索和证据融合
             if (!store.retrievalStarted(run.getId())) return;
             var request = new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
-            var context = new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
-            var retrieval = retriever.retrieve(request, context);
+            var context = new AgentRunContext(run.getId(),
+                    new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline()));
+            var candidates = retriever.retrieve(request, context.getRetrievalContext());
+            var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
             if (!store.retrieved(run.getId(), retrieval)) return;
             List<Evidence> evidence = retrieval.evidence();
 

@@ -1,8 +1,8 @@
 package com.ecnu.agentpapermate.rag;
 
-import com.ecnu.agentpapermate.rag.model.Evidence;
+import com.ecnu.agentpapermate.rag.model.EvidenceCandidate;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
-import com.ecnu.agentpapermate.rag.model.RetrievalResult;
+import com.ecnu.agentpapermate.rag.model.RetrievalCandidates;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
@@ -67,7 +67,7 @@ public class RagRetriever {
         this.papers = papers;
     }
 
-    public RetrievalResult retrieve(RetrievalRequest request, RetrievalContext context) {
+    public RetrievalCandidates retrieve(RetrievalRequest request, RetrievalContext context) {
         if (request == null || context == null) throw new IllegalArgumentException("检索请求和上下文不能为空");
         // 固定 RAG 与 Agent 共用配置上限，越界请求在访问外部服务前拒绝。
         if (request.topK() > properties.getRetrievalTopK()) {
@@ -144,7 +144,7 @@ public class RagRetriever {
                 Map.of("bool", Map.of("should", allowed, "minimum_should_match", 1)))));
     }
 
-    RetrievalResult fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
+    RetrievalCandidates fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
         Map<String, JsonNode> hits = new HashMap<>();
         Map<String, Double> scores = new HashMap<>();
         for (JsonNode response : responses) {
@@ -188,7 +188,7 @@ public class RagRetriever {
         }
 
         //6、先收集完整候选，再做原文去重、Token 和数量筛选，避免 break 截短候选快照
-        List<Evidence> result = new ArrayList<>();
+        List<EvidenceCandidate> result = new ArrayList<>();
         int tokens = 0;
         Set<String> contents = new HashSet<>();
         for (Candidate candidate : candidates) {
@@ -196,12 +196,11 @@ public class RagRetriever {
             int cost = encoding.countTokens(candidate.quote());
             if (tokens + cost > properties.getEvidenceTokenBudget()
                     || !contents.add(scope.paperId() + "\n" + candidate.quote())) continue;
-            result.add(new Evidence("E" + (result.size() + 1), scope.paperId(), scope.title(), scope.indexVersion(),
-                    scope.esIndexName(), candidate.chunkId(), candidate.start(), candidate.end(), candidate.quote(), scope.fileUrl()));
+            result.add(new EvidenceCandidate(scope, candidate.chunkId(), candidate.start(), candidate.end(), candidate.quote()));
             tokens += cost;
             if (result.size() >= properties.getMaxEvidence()) break;
         }
-        return new RetrievalResult(candidates.stream().map(Candidate::chunkId).toList(), result);
+        return new RetrievalCandidates(candidates.stream().map(Candidate::chunkId).toList(), result);
     }
 
     private record Candidate(PaperScope scope, String chunkId, int start, int end, String quote) { }

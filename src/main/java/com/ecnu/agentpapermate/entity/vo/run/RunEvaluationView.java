@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.ser.std.StdScalarSerializer;
 import java.io.IOException;
 import java.util.List;
 
-/** 评测采集数据；只返回运行结果，不暴露内部模型配置、权限快照或凭据。 */
+/** 评测采集数据；retrievedChunkIds 为全 Run 候选并集，不暴露内部模型配置、权限快照或凭据。 */
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
 public record RunEvaluationView(
         String runId, String status, String question,

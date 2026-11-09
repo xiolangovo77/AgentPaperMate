@@ -30,6 +30,27 @@
 
 所有状态写入先锁聊天室，再锁 Run；终态竞争在锁内判断。取消、失败、超时后不能继续保存助手消息或成功事件。任务状态、同一 Run 内递增的事件序号和事件记录在同一事务提交；SSE 只读取已提交的数据。
 
+## 统一执行入口（第二阶段第一批）
+
+生产执行链路为 `RunScheduler → RunDispatcher → RunExecutor.execute(context)`，当前唯一实现为 `FixedRagExecutor`。原 `RunProcessor` 已迁移并删除，不保留第二条执行路径；HTTP、SSE、引用与评测接口不变，无需数据库迁移。
+
+| 主体 | 职责 |
+| --- | --- |
+| `RunScheduler` | 扫描队列、控制并发，通过 `RunStore.start` 原子领取；提交已领取任务一次；线程提交失败通过 `fail(DISPATCH_FAILED)` 结束；扫描过期任务并请求中断已结束任务的线程 |
+| `RunDispatcher` | 根据持久化的 `executor_type` 选择唯一执行器；创建一次共享上下文；接收答案后调用 `complete`；统一归类执行异常并调用 `fail`，不重试执行 |
+| `FixedRagExecutor` | 推进检索与回答生成阶段，调用检索、证据注册、历史问题查询及回答生成；返回答案，不自行领取、完成或捕获异常写终态 |
+| `RunStore` | 唯一状态事务实现：领取、阶段推进、预算计数、完成、失败、取消、超时、消息与引用落库；在锁内仲裁终态竞争并释放会话占用 |
+
+用户取消仍由取消接口调用 `RunStore.cancel`。超时由 Scheduler 的 `expire` 扫描、阶段检查或外部请求超时触发，最终均由 RunStore 在锁内确认并写入一次终态。执行器遇到阶段检查返回 false 时返回空结果，Dispatcher 不再提交完成。异常处理写库失败会传播到 Scheduler，仅记录日志并交给截止时间回收，不重复执行或记账。
+
+`AgentRunContext.fromClaimedRun` 只接收后端已领取的 Run 快照，复制 Run ID、会话 ID、问题、模型名与配置，并从同一快照构建用户、论文与索引版本范围、截止时间。上下文不暴露可修改的 `AgentRun`；资料列表不可变，每个 Run 仅创建一个 `EvidenceRegistry`，检索、历史查询和聊天调用共用上下文。模型调用次数和用量仍以 RunStore 的数据库累计值为准，不在上下文另存一份计数。
+
+固定 RAG 继续执行一次检索；topK 使用 `rag.retrieval-top-k`，候选并集、证据编号、空证据回答、事件顺序及最终引用校验规则保持原样。`RunChatCaller` 仍是模型调用前计数和响应后用量登记的唯一入口，Dispatcher 与执行器不额外累计。
+
+目前创建接口仍固定写入 `executor_type=rag`。`agent`、未知值、空值均不会回退执行 RAG，而是通过 `UNSUPPORTED_EXECUTOR` 明确失败；若已有取消或超时终态，RunStore 保留原终态。执行器类型重复注册在应用初始化时失败。
+
+本批没有实现 Agent 循环。后续新增 `AgentExecutor` 时复用 Dispatcher 提供的上下文，`AgentHarness` 不再自行创建上下文或提交终态；仍需完成模型工具调用验证、工具权限与预算、循环停止条件、技能加载，以及多轮证据选择和最终证据快照策略。当前不会恢复重启前的 running 任务，也不会恢复其内存证据注册器，继续按既有截止时间回收。
+
 ## 业务阶段与数据库升级
 
 `agent_run.execution_phase` 记录业务阶段；`status` 记录运行生命周期，`event_seq` 只用于事件排序和 SSE 补发。增加技能或工具进度事件不会改变业务阶段，也不会阻止原有流程继续执行。
@@ -60,7 +81,7 @@
 
 `rag.max-model-calls` 默认 8，允许范围 1 至 100。创建 Run 时在现有 `model_config` 中记录 `maxModelCalls` 预算快照，已有 Run 缺少该项时使用当前配置。达到上限后，下一次调用检查会将 Run 结束为 `failed / MODEL_CALL_LIMIT`，释放会话占用并返回 false。取消或超时也阻止后续模型调用；调用入口抛出的中断异常不会覆盖已保存终态。修复或显式重试也必须通过同一入口，此处不增加自动重试。该次数上限独立于 Token 用量统计，不是总 Token 预算。
 
-`RunChatCaller.call(run, prompt)` 是固定 RAG 和后续 Agent 共用的聊天调用入口。通过 `RagCalls` 获得响应后，先读取 usage 并调用 `RunStore.addModelUsage()`，再将响应交给回答解析和引用校验。因此回答格式错误、引用失败或最终消息写入失败，不会回滚已经记录的模型用量。DashScope M6.1 的输出 Token 继续读取原生 `getGenerationTokens()`。
+`RunChatCaller.call(context, prompt)` 是固定 RAG 和后续 Agent 共用的聊天调用入口。通过 `RagCalls` 获得响应后，先读取 usage 并调用 `RunStore.addModelUsage()`，再将响应交给回答解析和引用校验。因此回答格式错误、引用失败或最终消息写入失败，不会回滚已经记录的模型用量。DashScope M6.1 的输出 Token 继续读取原生 `getGenerationTokens()`。
 
 `addModelUsage()` 使用独立短事务，沿用会话、Run 的锁顺序，再通过专用 SQL 对现有 `input_tokens`、`output_tokens` 原子累加，检查负数和 Java long 溢出。它不保存传入执行器的旧 Run 对象，不修改任务状态。响应已取得但任务刚好被取消或超时时，允许仅补记消耗。底层响应若已被超时或中断丢弃，则无法补记其未知用量。
 
@@ -159,14 +180,12 @@ data:{"runId":"123","eventId":"3","type":"retrieval_completed","timestamp":"2026
 - `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节；topK 为每路候选数量，构造时限制 1 至 100，执行时还必须不超过 `rag.retrieval-top-k`。该配置同时是固定 RAG 的默认值和 Agent 的上限；超限请求在调用外部服务前报错，不静默截断。融合后候选可能多于 topK。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
 - `RetrievalContext(userId, allowedScopes, deadline)`：仅由后端根据当前 Run 构建，不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
 - Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，`RunStore` 在保存证据和发布答案前再次验权；普通会话资料调整不会替换启动时快照，删除或撤权则阻止继续访问或发布结果。
-- 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。旧的 `call(AgentRun, operation)` 委托给这个入口，兼容聊天模型调用。
+- 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。聊天调用也从共享上下文取得截止时间；旧的 `call(AgentRun, operation)` 仍委托给这个入口。
 
-固定 RAG 在 `RunProcessor` 中这样调用：
+固定 RAG 在 `FixedRagExecutor` 中使用 Dispatcher 传入的 context：
 
 ```java
-var request = new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
-var context = new AgentRunContext(run.getId(),
-        new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline()));
+var request = new RetrievalRequest(context.getUserQuery(), null, properties.getRetrievalTopK());
 var candidates = retriever.retrieve(request, context.getRetrievalContext());
 var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
 ```

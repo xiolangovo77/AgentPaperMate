@@ -3,7 +3,7 @@ package com.ecnu.agentpapermate.scheduler;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.mapper.AgentRunMapper;
-import com.ecnu.agentpapermate.service.run.rag.RunProcessor;
+import com.ecnu.agentpapermate.service.run.RunDispatcher;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -23,7 +23,7 @@ import static org.mockito.Mockito.*;
 class RunSchedulerTest {
     private final AgentRunMapper runs = mock(AgentRunMapper.class);
     private final RunStore store = mock(RunStore.class);
-    private final RunProcessor processor = mock(RunProcessor.class);
+    private final RunDispatcher dispatcher = mock(RunDispatcher.class);
     private final ExecutorService executor = mock(ExecutorService.class);
     private final RagProperties properties = new RagProperties();
     private final AgentRun run = new AgentRun();
@@ -33,7 +33,7 @@ class RunSchedulerTest {
     @BeforeEach
     void setUp() {
         properties.setEnabled(true); properties.setMaxConcurrentRuns(1); run.setId(1L);
-        scheduler = new RunScheduler(runs, store, processor, properties, executor, clock);
+        scheduler = new RunScheduler(runs, store, dispatcher, properties, executor, clock);
         when(runs.selectExpiredCandidates(any(), any(), anyInt())).thenReturn(List.of());
         when(runs.selectPendingCandidates(1)).thenReturn(List.of(run));
         when(store.start(1L)).thenReturn(run);
@@ -46,7 +46,7 @@ class RunSchedulerTest {
         var task = ArgumentCaptor.forClass(Runnable.class);
         verify(executor).execute(task.capture());
         task.getValue().run();
-        verify(processor).process(run);
+        verify(dispatcher).dispatch(run);
         scheduler.poll();
         verify(store, times(2)).start(1L);
     }

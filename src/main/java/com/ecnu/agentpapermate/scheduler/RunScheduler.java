@@ -3,7 +3,7 @@ package com.ecnu.agentpapermate.scheduler;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.mapper.AgentRunMapper;
-import com.ecnu.agentpapermate.service.run.rag.RunProcessor;
+import com.ecnu.agentpapermate.service.run.RunDispatcher;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -30,9 +30,9 @@ public class RunScheduler {
      */
     private final RunStore store;
     /**
-     * 固定 RAG 流程执行器，负责检索、生成回答及保存结果。
+     * 统一执行入口，负责策略分发、完成结果和执行异常；调度器只处理提交失败。
      */
-    private final RunProcessor processor;
+    private final RunDispatcher dispatcher;
     /**
      * 问答运行配置，提供并发上限、排队超时等参数。
      */
@@ -58,9 +58,9 @@ public class RunScheduler {
      */
     private volatile boolean stopping;
 
-    public RunScheduler(AgentRunMapper runs, RunStore store, RunProcessor processor, RagProperties properties,
+    public RunScheduler(AgentRunMapper runs, RunStore store, RunDispatcher dispatcher, RagProperties properties,
                         @Qualifier("ragExecutor") ExecutorService executor, Clock ragClock) {
-        this.runs = runs; this.store = store; this.processor = processor; this.properties = properties;
+        this.runs = runs; this.store = store; this.dispatcher = dispatcher; this.properties = properties;
         this.executor = executor; this.clock = ragClock; this.permits = new Semaphore(properties.getMaxConcurrentRuns());
     }
 
@@ -106,7 +106,7 @@ public class RunScheduler {
     private void execute(AgentRun run) {
         executing.put(run.getId(), Thread.currentThread());
         try {
-            processor.process(run);
+            dispatcher.dispatch(run);
         } catch (RuntimeException e) {
             log.warn("问答结果写入失败，将由截止时间回收，runId={}", run.getId());
         } finally {

@@ -95,7 +95,8 @@ class RagHttpTest {
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
-        runContext = new AgentRunContext(run.getId(), retrievalContext());
+        run.setSessionId(10L); run.setStatus("running"); run.setExecutionPhase("ready");
+        runContext = AgentRunContext.fromClaimedRun(run, json);
     }
 
     private RetrievalRequest retrievalRequest() {
@@ -131,7 +132,7 @@ class RagHttpTest {
         for (String value : List.of("metadata.ownerId", "20", "metadata.paperId", "30", "metadata.indexVersion",
                 "metadata.attemptToken", "attempt", "_index", "paper_test", "metadata.pageKnown")) assertTrue(constraints.contains(value), value);
         assertEquals(3, searches.getLast().at("/knn/query_vector").size());
-        var answer = generator.generate(run, evidence, List.of("前一个问题"));
+        var answer = generator.generate(runContext, evidence, List.of("前一个问题"));
         assertEquals("答案[E1]", answer.content());
         verify(store).addModelUsage(40L, 10L, 20L);
         var chat = requests.get("/api/v1/services/aigc/multimodal-generation/generation").getFirst();

@@ -3,7 +3,7 @@ package com.ecnu.agentpapermate.rag;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
-import com.ecnu.agentpapermate.entity.model.AgentRun;
+import com.ecnu.agentpapermate.agent.context.AgentRunContext;
 import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import com.ecnu.agentpapermate.validator.AnswerValidator;
@@ -30,7 +30,7 @@ public class RagAnswerGenerator {
         this.chatCaller = chatCaller; this.json = json;
     }
 
-    public Answer generate(AgentRun run, List<Evidence> evidence, List<String> previousQuestions) {
+    public Answer generate(AgentRunContext context, List<Evidence> evidence, List<String> previousQuestions) {
         //1、通过系统消息约束输出，论文内容和历史问题作为数据而非系统指令
         String rules = """
                 你是论文研究助手。只根据本次 evidence 中的原文证据回答，不能以历史问题或常识作为论文事实的依据。
@@ -41,15 +41,15 @@ public class RagAnswerGenerator {
                 evidenceIds 只填写实际引用的本次证据 ID，不重复；正文标记必须与 evidenceIds 完全一致。
                 不要输出 Markdown 代码围栏，也不要在正文中另外编造参考文献表。
                 """;
-        Map<String, Object> input = Map.of("question", run.getUserQuery(), "previousQuestions", previousQuestions,
+        Map<String, Object> input = Map.of("question", context.getUserQuery(), "previousQuestions", previousQuestions,
                 "evidence", evidence.stream().map(item -> Map.of("id", item.evidenceId(), "text", item.quotedText())).toList());
-        JsonNode config = json.tree(run.getModelConfig());
-        var options = DashScopeChatOptions.builder().withModel(run.getModelName())
+        JsonNode config = json.tree(context.getModelConfig());
+        var options = DashScopeChatOptions.builder().withModel(context.getModelName())
                 .withTemperature(config.path("temperature").asDouble(0.2))
                 .withMaxToken(config.path("maxTokens").asInt(2048)).build();
         options.setEnableSearch(false);
         //2、非流式获取完整结果，校验前不向前端发布正文
-        var response = chatCaller.call(run, new Prompt(List.of(new SystemMessage(rules),
+        var response = chatCaller.call(context, new Prompt(List.of(new SystemMessage(rules),
                 new UserMessage(json.write(input))), options));
         if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
             throw new AnswerValidator.InvalidAnswer();

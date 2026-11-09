@@ -85,7 +85,7 @@ public class RunQueries {
                 .map(item -> new RunEvaluationView.Citation(item.getEvidenceId(), item.getPaperId().toString(),
                         item.getChunkId(), item.getPageStart(), item.getPageEnd())).toList();
 
-        //3、耗时只计任务执行；失败任务尚未可靠累计模型用量，返回 null 而非初始的 0
+        //3、耗时只计任务执行；失败任务可能仅有部分用量，缺少完整性标记时仍导出 null
         Long latency = RunStore.terminal(run.getStatus()) && run.getStartTime() != null && run.getEndTime() != null
                 && !run.getEndTime().isBefore(run.getStartTime())
                 ? Duration.between(run.getStartTime(), run.getEndTime()).toMillis() : null;

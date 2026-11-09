@@ -37,6 +37,13 @@
         <result column="is_delete" property="isDelete" />
     </resultMap>
 
+    <update id="addModelUsage">
+        UPDATE agent_run
+        SET input_tokens = input_tokens + #{inputTokens},
+            output_tokens = output_tokens + #{outputTokens}
+        WHERE id = #{id} AND is_delete = 0
+    </update>
+
     <select id="selectForUpdate" resultMap="BaseResultMap">
         SELECT * FROM agent_run WHERE id = #{id} AND is_delete = 0 FOR UPDATE
     </select>

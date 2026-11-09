@@ -3,17 +3,14 @@ package com.ecnu.agentpapermate.rag;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions;
-import com.alibaba.cloud.ai.dashscope.metadata.DashScopeAiUsage;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
-import com.ecnu.agentpapermate.support.ai.RagCalls;
+import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import com.ecnu.agentpapermate.validator.AnswerValidator;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -22,20 +19,15 @@ import java.util.*;
 @Component
 public class RagAnswerGenerator {
     /**
-     * 原生 DashScope 回答模型，按任务快照中的模型名称和参数生成完整回答。
+     * 统一聊天调用入口，在返回响应前独立累计本次模型用量。
      */
-    private final ChatModel model;
+    private final RunChatCaller chatCaller;
     /**
      * 任务 JSON 转换工具，用于构建模型输入并解析结构化回答。
      */
     private final RagJson json;
-    /**
-     * 外部调用执行器，负责模型请求的限时等待及取消处理。
-     */
-    private final RagCalls calls;
-
-    public RagAnswerGenerator(@Qualifier("ragChatModel") ChatModel model, RagJson json, RagCalls calls) {
-        this.model = model; this.json = json; this.calls = calls;
+    public RagAnswerGenerator(RunChatCaller chatCaller, RagJson json) {
+        this.chatCaller = chatCaller; this.json = json;
     }
 
     public Answer generate(AgentRun run, List<Evidence> evidence, List<String> previousQuestions) {
@@ -57,21 +49,16 @@ public class RagAnswerGenerator {
                 .withMaxToken(config.path("maxTokens").asInt(2048)).build();
         options.setEnableSearch(false);
         //2、非流式获取完整结果，校验前不向前端发布正文
-        var response = calls.call(run, () -> model.call(new Prompt(List.of(new SystemMessage(rules),
-                new UserMessage(json.write(input))), options)));
+        var response = chatCaller.call(run, new Prompt(List.of(new SystemMessage(rules),
+                new UserMessage(json.write(input))), options));
         if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
             throw new AnswerValidator.InvalidAnswer();
         }
         String output = response.getResult().getOutput().getText();
-        var usage = response.getMetadata().getUsage();
-        long inputTokens = usage.getPromptTokens() == null ? 0 : usage.getPromptTokens();
-        //3、M6.1 的 getCompletionTokens 固定返回 0，原生输出用量需读取 getGenerationTokens
-        long outputTokens = usage instanceof DashScopeAiUsage nativeUsage ? nativeUsage.getGenerationTokens()
-                : (usage.getCompletionTokens() == null ? 0 : usage.getCompletionTokens());
-        return parse(output, evidence, inputTokens, outputTokens);
+        return parse(output, evidence);
     }
 
-    Answer parse(String output, List<Evidence> evidence, long inputTokens, long outputTokens) {
+    Answer parse(String output, List<Evidence> evidence) {
         //1、仅接受规定的 JSON 字段结构，引用必须来自当前证据
         try {
             if (output == null || output.length() > 100000) throw new AnswerValidator.InvalidAnswer();
@@ -84,7 +71,7 @@ public class RagAnswerGenerator {
                 if (!node.isTextual()) throw new AnswerValidator.InvalidAnswer();
                 ids.add(node.asText());
             }
-            Answer answer = new Answer(root.path("answer").asText(), ids, inputTokens, outputTokens);
+            Answer answer = new Answer(root.path("answer").asText(), ids);
             AnswerValidator.validate(answer, evidence);
             return answer;
         } catch (IllegalArgumentException e) {

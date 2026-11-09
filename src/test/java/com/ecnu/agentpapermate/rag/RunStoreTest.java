@@ -201,7 +201,7 @@ class RunStoreTest {
         assertThrows(BusinessException.class, () -> store.complete(40L, answer()));
         when(papers.selectCount(any())).thenReturn(1L);
         assertThrows(AnswerValidator.InvalidAnswer.class, () -> store.complete(40L,
-                new Answer("伪造[E9]", List.of("E9"), 0, 0)));
+                new Answer("伪造[E9]", List.of("E9"))));
         verifyNoInteractions(messages, citations, events);
     }
 
@@ -291,6 +291,6 @@ class RunStoreTest {
 
     static PaperScope scope() { return new PaperScope(30L, "Paper", 1, "attempt", "paper_test", "embedding", "v1", 3, "https://files.example/paper.pdf"); }
     static Evidence evidence() { return new Evidence("E1", 30L, "Paper", 1, "paper_test", "chunk1", 2, 3, "原文", "https://files.example/paper.pdf"); }
-    static Answer answer() { return new Answer("答案[E1]", List.of("E1"), 10, 20); }
+    static Answer answer() { return new Answer("答案[E1]", List.of("E1")); }
     static RetrievalResult retrieval() { return new RetrievalResult(List.of("chunk1", "chunk2"), List.of(evidence())); }
 }

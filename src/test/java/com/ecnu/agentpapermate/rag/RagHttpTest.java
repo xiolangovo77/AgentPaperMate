@@ -1,6 +1,8 @@
 package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.support.ai.RagCalls;
+import com.ecnu.agentpapermate.support.ai.RunChatCaller;
+import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
@@ -23,6 +25,7 @@ import java.util.concurrent.*;
 
 import static com.ecnu.agentpapermate.rag.RunStoreTest.*;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 /** 使用本地 HTTP 替身验证真实 DashScope 与 ES 请求，不调用收费模型或业务数据。 */
 class RagHttpTest {
@@ -36,6 +39,7 @@ class RagHttpTest {
     private RestClient es;
     private RagRetriever retriever;
     private RagAnswerGenerator generator;
+    private RunStore store;
     private volatile boolean timedOut;
 
     @BeforeEach
@@ -79,7 +83,9 @@ class RagHttpTest {
         Clock clock = Clock.system(ZoneId.of("Asia/Shanghai"));
         var calls = new RagCalls(executor, properties, clock);
         retriever = new RagRetriever(es, embedding, properties, processing, json, calls);
-        generator = new RagAnswerGenerator(new RagConfiguration().ragChatModel(properties, connection), json, calls);
+        store = mock(RunStore.class);
+        generator = new RagAnswerGenerator(new RunChatCaller(
+                new RagConfiguration().ragChatModel(properties, connection), calls, store), json);
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
@@ -111,7 +117,8 @@ class RagHttpTest {
                 "metadata.attemptToken", "attempt", "_index", "paper_test", "metadata.pageKnown")) assertTrue(constraints.contains(value), value);
         assertEquals(3, searches.getLast().at("/knn/query_vector").size());
         var answer = generator.generate(run, evidence, List.of("前一个问题"));
-        assertEquals("答案[E1]", answer.content()); assertEquals(10, answer.inputTokens()); assertEquals(20, answer.outputTokens());
+        assertEquals("答案[E1]", answer.content());
+        verify(store).addModelUsage(40L, 10L, 20L);
         var chat = requests.get("/api/v1/services/aigc/multimodal-generation/generation").getFirst();
         assertEquals("qwen3.7-plus", chat.path("model").asText());
         assertEquals(2048, chat.at("/parameters/max_tokens").asInt());
@@ -193,7 +200,7 @@ class RagHttpTest {
         for (String output : List.of("答案[E1]", "{\"answer\":\"伪造[E9]\",\"evidenceIds\":[\"E9\"]}",
                 "{\"answer\":\"未标引用\",\"evidenceIds\":[\"E1\"]}", "{\"answer\":\"答案[E1]\",\"evidenceIds\":[]}",
                 "{\"answer\":\"答案[E1]\",\"evidenceIds\":[\"E1\"]} {\"extra\":true}")) {
-            assertThrows(AnswerValidator.InvalidAnswer.class, () -> generator.parse(output, List.of(evidence()), 1, 1));
+            assertThrows(AnswerValidator.InvalidAnswer.class, () -> generator.parse(output, List.of(evidence())));
         }
     }
 

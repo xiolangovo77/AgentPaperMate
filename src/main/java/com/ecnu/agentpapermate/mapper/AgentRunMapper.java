@@ -20,6 +20,10 @@ public interface AgentRunMapper extends BaseMapper<AgentRun> {
     /** 调用前先锁定所属聊天室，统一锁顺序，防止取消与完成互相覆盖。 */
     AgentRun selectForUpdate(@Param("id") Long id);
 
+    /** 原子累计单次模型响应的已知用量；非幂等，禁止自动重试。 */
+    int addModelUsage(@Param("id") Long id, @Param("inputTokens") long inputTokens,
+                      @Param("outputTokens") long outputTokens);
+
     /** 查询运行或排队超时的候选任务，状态最终在事务锁内重新确认。 */
     List<AgentRun> selectExpiredCandidates(@Param("now") LocalDateTime now,
                                          @Param("queuedBefore") LocalDateTime queuedBefore,

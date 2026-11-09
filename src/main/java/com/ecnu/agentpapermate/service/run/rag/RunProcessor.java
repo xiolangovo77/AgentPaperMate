@@ -49,7 +49,7 @@ public class RunProcessor {
             Answer answer;
             if (evidence.isEmpty()) {
                 answer = new Answer("无法从当前资料中找到具有可靠页码的有效证据，暂时无法确认该问题。请调整问题或检查论文解析结果。",
-                        List.of(), 0, 0);
+                        List.of());
             } else {
                 if (!store.modelStarted(run.getId())) return;
                 answer = generator.generate(run, evidence, queries.previousQuestions(run));

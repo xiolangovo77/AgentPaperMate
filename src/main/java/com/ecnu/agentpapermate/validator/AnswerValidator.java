@@ -14,9 +14,9 @@ public final class AnswerValidator {
     private AnswerValidator() { }
 
     public static void validate(Answer answer, List<Evidence> evidence) {
-        //1、校验回答大小、用量与引用集合，不允许未知证据或重复引用 ID
+        //1、校验回答大小与引用集合，不允许未知证据或重复引用 ID
         if (answer == null || answer.content() == null || answer.content().isBlank() || answer.content().length() > 100000
-                || answer.evidenceIds() == null || answer.inputTokens() < 0 || answer.outputTokens() < 0) {
+                || answer.evidenceIds() == null) {
             throw new InvalidAnswer();
         }
         Set<String> allowed = new HashSet<>();

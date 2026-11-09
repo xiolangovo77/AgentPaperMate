@@ -19,6 +19,7 @@ import com.ecnu.agentpapermate.service.ChatSessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -185,6 +186,22 @@ public class RunStore {
         return true;
     }
 
+    /** 已发生的模型消耗独立提交，后续答案校验失败不回滚；同一次响应只能调用一次。 */
+    @Transactional(propagation = Propagation.REQUIRES_NEW, rollbackFor = Exception.class)
+    public void addModelUsage(Long id, long inputTokens, long outputTokens) {
+        if (id == null || id <= 0 || inputTokens < 0 || outputTokens < 0) {
+            throw new IllegalArgumentException("任务 ID 或模型用量无效");
+        }
+        // 沿用会话、Run 锁顺序，避免其他状态事务的 updateById 覆盖累计值。
+        // 不用 live：已取得的用量可在取消或超时后记账，但不改变任务状态或发布答案。
+        AgentRun run = lock(id);
+        if (run == null) throw new IllegalStateException("用量所属任务不存在");
+        Math.addExact(run.getInputTokens(), inputTokens);
+        Math.addExact(run.getOutputTokens(), outputTokens);
+        if (inputTokens == 0 && outputTokens == 0) return;
+        changed(runs.addModelUsage(id, inputTokens, outputTokens));
+    }
+
     @Transactional(rollbackFor = Exception.class)
     public boolean complete(Long id, Answer answer) {
         //1、加锁后重新确认任务仍在运行，过期或取消结果不得迟到写入
@@ -214,7 +231,6 @@ public class RunStore {
         }
 
         //3、消息、引用、终态及最终事件原子提交，SSE 仅读取提交后的事件
-        run.setInputTokens(answer.inputTokens()); run.setOutputTokens(answer.outputTokens());
         finish(run, "completed", null, null, Map.of("messageId", message.getId(), "content", answer.content(), "citations", saved));
         return true;
     }
@@ -303,7 +319,7 @@ public class RunStore {
     }
 
     private void finish(AgentRun run, String status, String code, String error, Map<String, Object> result) {
-        //1、更新终态、结束时间和用量，整个方法必须在持有任务锁的事务内调用
+        //1、更新终态和结束时间，保留已累计用量；必须在持有任务锁的事务内调用
         run.setStatus(status); run.setEndTime(now()); run.setErrorCode(code); run.setErrorMessage(error);
         changed(runs.updateById(run));
         Map<String, Object> payload = new LinkedHashMap<>(result);

@@ -37,7 +37,7 @@ class RunProcessorTest {
         run.setDeadline(LocalDateTime.now().plusSeconds(180));
         when(store.retrievalStarted(1L)).thenReturn(true);
         when(store.retrieved(eq(1L), any())).thenReturn(true);
-        when(store.modelStarted(1L)).thenReturn(true);
+        when(store.answerGenerationStarted(1L)).thenReturn(true);
     }
 
     @Test
@@ -85,7 +85,7 @@ class RunProcessorTest {
         processor.process(run);
         var order = inOrder(store, generator);
         order.verify(store).retrieved(1L, retrieval);
-        order.verify(store).modelStarted(1L);
+        order.verify(store).answerGenerationStarted(1L);
         order.verify(generator).generate(run, retrieval.evidence(), List.of());
         order.verify(store).complete(1L, RunStoreTest.answer());
     }

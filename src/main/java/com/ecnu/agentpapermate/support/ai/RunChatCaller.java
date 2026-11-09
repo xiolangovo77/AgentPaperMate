@@ -9,6 +9,8 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.CancellationException;
+
 /** 固定 RAG 和 Agent 共用的聊天调用入口；每次响应先累计用量，再交给业务解析。 */
 @Component
 public class RunChatCaller {
@@ -23,7 +25,15 @@ public class RunChatCaller {
     }
 
     public ChatResponse call(AgentRun run, Prompt prompt) {
-        ChatResponse response = calls.call(run, () -> model.call(prompt));
+        ChatResponse response = calls.call(run, () -> {
+            // 放在限时等待内，预算覆盖数据库检查；每次模型请求只登记一次调用尝试。
+            if (Thread.currentThread().isInterrupted() || !store.modelCallStarted(run.getId())) {
+                throw new CancellationException("运行已结束或模型调用预算已耗尽");
+            }
+            // 检查数据库期间父线程可能已因取消或超时停止等待。
+            if (Thread.currentThread().isInterrupted()) throw new CancellationException("模型请求已停止");
+            return model.call(prompt);
+        });
         // 即使回答为空或稍后引用校验失败，也先保存上游已经返回的用量。
         if (response != null && response.getMetadata() != null && response.getMetadata().getUsage() != null) {
             var usage = response.getMetadata().getUsage();

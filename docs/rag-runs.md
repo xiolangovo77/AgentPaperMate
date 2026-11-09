@@ -40,12 +40,13 @@
 | `start` | `status=pending` | `ready` |
 | `retrievalStarted` | `ready`、`evidence_ready`、`generating` | `retrieving` |
 | `retrieved` | `retrieving` | `evidence_ready` |
-| `modelStarted` | `evidence_ready`、`generating` | `generating` |
+| `answerGenerationStarted` | `evidence_ready`、`generating` | `generating` |
+| `modelCallStarted` | 任意阶段，要求 `status=running` 且未超时 | 保留业务阶段，累计一次调用尝试 |
 | `complete` | `evidence_ready`、`generating` | 保留最后阶段，`status=completed` |
 
 阶段检查在 Run 行锁内执行。检索开始的阶段更新与开始事件一起提交；检索完成的两份快照、阶段更新和完成事件一起提交。可在上一轮证据已就绪或模型已调用后开始下一轮；检索进行中重复开始、未开始就提交结果、未准备证据就完成仍会被拒绝。模型再次调用仍累计 `step_count`，此处不新增自动修复或重试。
 
-调用模型和完成回答前均检查检索、证据快照：SQL null 或 JSON null 不表示有效空结果，JSON 空数组 `[]` 才表示检索完成但没有结果。空结果允许跳过模型，从 `evidence_ready` 直接保存无法确认的回答。权限、截止时间和引用校验继续生效。失败、取消和超时保留最后业务阶段，便于定位停止位置。
+进入回答生成阶段和完成回答前均检查检索、证据快照：SQL null 或 JSON null 不表示有效空结果，JSON 空数组 `[]` 才表示检索完成但没有结果。公共模型调用检查不要求已有证据，因此 Agent 首轮选择工具时也可以调用。空结果允许跳过模型，从 `evidence_ready` 直接保存无法确认的回答。权限、截止时间和引用校验继续生效。失败、取消和超时保留最后业务阶段，便于定位停止位置。
 
 已有数据库需要在启动新代码前手动执行 `sql/migrations/20261109_add_run_execution_phase.sql`，仅执行一次。升级顺序：停止所有实例的 Run 写入，完整执行加列和历史回填，再启动新版本。新数据库使用更新后的 `sql/create_table.sql`，不重复执行增量脚本。
 
@@ -55,13 +56,17 @@
 
 ## 按模型调用累计用量
 
+`RunChatCaller` 在 `RagCalls` 的限时操作内、真正调用聊天模型之前调用 `RunStore.modelCallStarted()`。它在短事务中锁定最新 Run，检查运行状态、截止时间和当前资料权限，并累计一次 `step_count`，不要求证据、不修改业务阶段。`answerGenerationStarted()` 仅检查证据和切换生成阶段，不再计数。每次通过检查的调用尝试计一次，模型请求失败也不回退次数；未通过检查则不发起请求。
+
+`rag.max-model-calls` 默认 8，允许范围 1 至 100。创建 Run 时在现有 `model_config` 中记录 `maxModelCalls` 预算快照，已有 Run 缺少该项时使用当前配置。达到上限后，下一次调用检查会将 Run 结束为 `failed / MODEL_CALL_LIMIT`，释放会话占用并返回 false。取消或超时也阻止后续模型调用；调用入口抛出的中断异常不会覆盖已保存终态。修复或显式重试也必须通过同一入口，此处不增加自动重试。该次数上限独立于 Token 用量统计，不是总 Token 预算。
+
 `RunChatCaller.call(run, prompt)` 是固定 RAG 和后续 Agent 共用的聊天调用入口。通过 `RagCalls` 获得响应后，先读取 usage 并调用 `RunStore.addModelUsage()`，再将响应交给回答解析和引用校验。因此回答格式错误、引用失败或最终消息写入失败，不会回滚已经记录的模型用量。DashScope M6.1 的输出 Token 继续读取原生 `getGenerationTokens()`。
 
 `addModelUsage()` 使用独立短事务，沿用会话、Run 的锁顺序，再通过专用 SQL 对现有 `input_tokens`、`output_tokens` 原子累加，检查负数和 Java long 溢出。它不保存传入执行器的旧 Run 对象，不修改任务状态。响应已取得但任务刚好被取消或超时时，允许仅补记消耗。底层响应若已被超时或中断丢弃，则无法补记其未知用量。
 
 `Answer` 只包含正文和引用 ID；`complete()` 不再设置 Token。此次没有新增表、字段或 callId。累计接口非幂等，同一次响应只能提交一次；数据库报错或提交结果不确定时直接传播异常，不自动重试记账或模型调用。模型调用和记账入口应在业务事务之外使用。
 
-数据库保存的是上游已经报告并成功记录的累计值；缺失 usage 不代表真实消耗为零，此版本不记录用量完整性，也不补造历史用量。Embedding 用量不计入聊天模型这两个累计字段。后续 Agent 每轮聊天调用均应经过此入口；模型轮数、阶段检查和预算仍由执行流程管理。
+数据库保存的是上游已经报告并成功记录的累计值；缺失 usage 不代表真实消耗为零，此版本不记录用量完整性，也不补造历史用量。Embedding 用量不计入聊天模型这两个累计字段。后续 Agent 每轮聊天调用均应经过此入口，共用调用次数检查与计数；任务方法、工具和上下文预算由执行流程进一步管理。
 
 ## 前端接口
 

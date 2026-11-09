@@ -113,7 +113,8 @@ public class RunStore {
         run.setExecutorType("rag"); run.setStatus("pending"); run.setScopeVersion(session.getScopeVersion());
         run.setExecutionPhase("queued");
         run.setPapersSnapshot(json.write(scope)); run.setModelName(properties.getModel());
-        run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2)));
+        run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2,
+                "maxModelCalls", properties.getMaxModelCalls())));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);
         run.setStepCount(0); run.setToolCallCount(0); run.setIsDelete((byte) 0);
         changed(runs.insert(run));
@@ -180,16 +181,46 @@ public class RunStore {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public boolean modelStarted(Long id) {
-        //1、调用模型前再次核对任务状态和权限，记录实际发起的模型轮数
+    public boolean answerGenerationStarted(Long id) {
+        //1、进入最终回答生成阶段前核对状态、权限及证据，不在此累计模型调用次数
         AgentRun run = live(id);
         if (run == null) return false;
-        // generating 允许后续受控修复再次调用模型，每次仍累计轮数。
+        // generating 允许后续受控修复重新检查证据。
         requirePhase(run, "evidence_ready", "generating");
         verifyAccess(run);
         requireEvidence(run);
         run.setExecutionPhase("generating");
-        run.setStepCount(run.getStepCount() + 1);
+        changed(runs.updateById(run));
+        return true;
+    }
+
+    /** 公共模型调用前检查；工具选择等尚无证据的模型请求也使用此入口。 */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean modelCallStarted(Long id) {
+        if (id == null || id <= 0) throw new IllegalArgumentException("任务 ID 无效");
+        AgentRun run = live(id);
+        if (run == null) return false;
+        verifyAccess(run);
+        // 新任务使用创建时的预算快照；旧任务缺少该配置时沿用当前配置上限。
+        int limit = properties.getMaxModelCalls();
+        if (run.getModelConfig() != null) {
+            var config = json.tree(run.getModelConfig());
+            if (config != null && config.has("maxModelCalls")) {
+                var maximum = config.get("maxModelCalls");
+                if (!maximum.isIntegralNumber() || !maximum.canConvertToInt()) {
+                    throw new IllegalStateException("模型调用预算快照无效");
+                }
+                limit = maximum.intValue();
+            }
+        }
+        if (limit < 1 || limit > 100) throw new IllegalStateException("模型调用次数上限无效");
+        if (run.getStepCount() >= limit) {
+            // 返回 false 让失败终态正常提交，调用方不得继续请求模型。
+            finish(run, "failed", "MODEL_CALL_LIMIT", "模型调用次数已达到上限", Map.of());
+            return false;
+        }
+        // 只累计调用尝试，不要求证据快照、不修改 execution_phase。
+        run.setStepCount(Math.addExact(run.getStepCount(), 1));
         changed(runs.updateById(run));
         return true;
     }

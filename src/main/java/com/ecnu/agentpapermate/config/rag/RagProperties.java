@@ -16,6 +16,8 @@ public class RagProperties {
     private String model = "qwen3.7-plus";
     /** 模型输出上限。 */
     private int maxOutputTokens = 2048;
+    /** 每个 Run 最多发起的聊天模型调用次数，包含失败请求和显式重试。 */
+    private int maxModelCalls = 8;
     /** 单次外部请求最长等待秒数。 */
     private int requestTimeoutSeconds = 60;
     /** 开始执行后的总预算秒数。 */
@@ -43,7 +45,8 @@ public class RagProperties {
                 || maxConcurrentRuns < 1 || maxConcurrentRuns > 64 || retrievalTopK < 1 || retrievalTopK > 100
                 || maxEvidence < 1 || maxEvidence > retrievalTopK || evidenceTokenBudget < 128
                 || evidenceTokenBudget > 32000 || maxPapers < 1 || maxPapers > 100
-                || maxOutputTokens < 1 || maxOutputTokens > 16000 || maxSseConnections < 1 || maxSseConnections > 1000) {
+                || maxOutputTokens < 1 || maxOutputTokens > 16000 || maxModelCalls < 1 || maxModelCalls > 100
+                || maxSseConnections < 1 || maxSseConnections > 1000) {
             throw new IllegalArgumentException("rag 执行预算配置无效");
         }
         //2、仅在开启问答时强制校验模型名称，不影响已存在的论文入库服务

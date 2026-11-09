@@ -89,6 +89,7 @@ class RagHttpTest {
         var calls = new RagCalls(executor, properties, clock);
         retriever = new RagRetriever(es, embedding, properties, processing, json, calls, mock(PaperService.class));
         store = mock(RunStore.class);
+        when(store.modelCallStarted(40L)).thenReturn(true);
         generator = new RagAnswerGenerator(new RunChatCaller(
                 new RagConfiguration().ragChatModel(properties, connection), calls, store), json);
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");

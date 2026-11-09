@@ -3,6 +3,9 @@ package com.ecnu.agentpapermate.rag;
 import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
+import com.ecnu.agentpapermate.service.PaperService;
+import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
+import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
@@ -82,13 +85,21 @@ class RagHttpTest {
         es = RestClient.builder(HttpHost.create(url)).build();
         Clock clock = Clock.system(ZoneId.of("Asia/Shanghai"));
         var calls = new RagCalls(executor, properties, clock);
-        retriever = new RagRetriever(es, embedding, properties, processing, json, calls);
+        retriever = new RagRetriever(es, embedding, properties, processing, json, calls, mock(PaperService.class));
         store = mock(RunStore.class);
         generator = new RagAnswerGenerator(new RunChatCaller(
                 new RagConfiguration().ragChatModel(properties, connection), calls, store), json);
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
+    }
+
+    private RetrievalRequest retrievalRequest() {
+        return new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
+    }
+
+    private RetrievalContext retrievalContext() {
+        return new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
     }
 
     @AfterEach
@@ -100,7 +111,7 @@ class RagHttpTest {
 
     @Test
     void nativeQueryEmbeddingTwoFilteredSearchesAndNativeChatRoundTrip() {
-        var retrieval = retriever.retrieve(run);
+        var retrieval = retriever.retrieve(retrievalRequest(), retrievalContext());
         var evidence = retrieval.evidence();
         assertEquals(List.of("chunk1"), retrieval.retrievedChunkIds());
         assertEquals(1, evidence.size());
@@ -130,7 +141,7 @@ class RagHttpTest {
     @Test
     void partialSearchTimeoutNeverReturnsSuccessfulEvidence() {
         timedOut = true;
-        assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(run));
+        assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(retrievalRequest(), retrievalContext()));
         assertEquals(1, requests.get("/paper_test/_search").size());
     }
 

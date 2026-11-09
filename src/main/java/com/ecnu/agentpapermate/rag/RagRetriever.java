@@ -3,10 +3,12 @@ package com.ecnu.agentpapermate.rag;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
 import com.ecnu.agentpapermate.rag.model.RetrievalResult;
+import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
+import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
-import com.ecnu.agentpapermate.entity.model.AgentRun;
+import com.ecnu.agentpapermate.service.PaperService;
 import com.ecnu.agentpapermate.support.ai.RagCalls;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -43,13 +45,15 @@ public class RagRetriever {
      */
     private final PaperProcessingProperties processing;
     /**
-     * 任务 JSON 转换工具，用于读取资料快照和转换 ES 请求、响应。
+     * JSON 转换工具，用于转换 ES 请求、响应。
      */
     private final RagJson json;
     /**
      * 外部调用执行器，同时约束单次请求超时与任务剩余运行预算。
      */
     private final RagCalls calls;
+    /** 每次访问前核对当前论文归属，Run 快照不能绕过删除或撤权。 */
+    private final PaperService papers;
     /**
      * cl100k_base 编码器，用于估算证据文本的 Token 数量并控制上下文预算。
      */
@@ -57,15 +61,20 @@ public class RagRetriever {
 
     public RagRetriever(@Qualifier("paperElasticsearchClient") RestClient client,
                         @Qualifier("ragQueryEmbeddingModel") EmbeddingModel embedding, RagProperties properties,
-                        PaperProcessingProperties processing, RagJson json, RagCalls calls) {
+                        PaperProcessingProperties processing, RagJson json, RagCalls calls, PaperService papers) {
         this.client = client; this.embedding = embedding; this.properties = properties;
         this.processing = processing; this.json = json; this.calls = calls;
+        this.papers = papers;
     }
 
-    public RetrievalResult retrieve(AgentRun run) {
+    public RetrievalResult retrieve(RetrievalRequest request, RetrievalContext context) {
+        if (request == null || context == null) throw new IllegalArgumentException("检索请求和上下文不能为空");
+        // 固定 RAG 与 Agent 共用配置上限，越界请求在访问外部服务前拒绝。
+        if (request.topK() > properties.getRetrievalTopK()) {
+            throw new IllegalArgumentException("每路检索候选数量不能超过配置上限：" + properties.getRetrievalTopK());
+        }
         //1、用 query 模式生成问题向量，不能沿用入库时的 document 模式
-        List<PaperScope> scopes = json.scopes(run.getPapersSnapshot());
-        if (scopes.isEmpty()) throw new IllegalStateException("检索范围为空");
+        List<PaperScope> scopes = resolveScopes(request, context);
         for (PaperScope scope : scopes) {
             if (!Objects.equals(scope.embeddingModel(), processing.getEmbeddingModel())
                     || !Objects.equals(scope.embeddingVersion(), processing.getEmbeddingVersion())
@@ -73,10 +82,11 @@ public class RagRetriever {
                 throw new IllegalStateException("任务向量配置已变化，请重新提交任务");
             }
         }
-        float[] vector = calls.call(run, () -> {
+        float[] vector = calls.call(context.deadline(), () -> {
+            verifyAccess(context.userId(), scopes);
             var options = DashScopeEmbeddingOptions.builder().withModel(scopes.getFirst().embeddingModel())
                     .withTextType("query").build();
-            var response = embedding.call(new EmbeddingRequest(List.of(run.getUserQuery()), options));
+            var response = embedding.call(new EmbeddingRequest(List.of(request.query()), options));
             if (response.getResults().size() != 1) throw new IllegalStateException("问题向量数量错误");
             return response.getResults().getFirst().getOutput();
         });
@@ -84,19 +94,41 @@ public class RagRetriever {
         for (float number : vector) if (!Float.isFinite(number)) throw new IllegalStateException("问题向量含无效数值");
 
         //2、两路检索使用相同权限与快照约束，未知页码片段不作为可发布引用
-        Object filter = filter(run.getUserId(), scopes);
-        int k = properties.getRetrievalTopK();
+        Object filter = filter(context.userId(), scopes);
+        int k = request.topK();
         Map<String, Object> lexical = Map.of("size", k, "_source", List.of("content", "metadata"),
                 "query", Map.of("bool", Map.of("filter", filter, "must", Map.of("multi_match", Map.of(
-                        "query", run.getUserQuery(), "fields", List.of("content", "content.en", "content.cjk"))))));
+                        "query", request.query(), "fields", List.of("content", "content.en", "content.cjk"))))));
         Map<String, Object> semantic = Map.of("size", k, "_source", List.of("content", "metadata"), "knn", Map.of(
                 "field", "embedding", "query_vector", vector, "k", k, "num_candidates", Math.max(100, k * 5), "filter", filter));
         String path = searchPath(scopes);
-        JsonNode bm25 = calls.call(run, () -> search(path, lexical));
-        JsonNode knn = calls.call(run, () -> search(path, semantic));
+        JsonNode bm25 = calls.call(context.deadline(), () -> {
+            verifyAccess(context.userId(), scopes);
+            return search(path, lexical);
+        });
+        JsonNode knn = calls.call(context.deadline(), () -> {
+            verifyAccess(context.userId(), scopes);
+            return search(path, semantic);
+        });
 
         //3、按排序名次融合而非直接相加不同量纲的分数，统一去重并限制证据预算
-        return fuse(run.getUserId(), scopes, bm25, knn);
+        return fuse(context.userId(), scopes, bm25, knn);
+    }
+
+    private List<PaperScope> resolveScopes(RetrievalRequest request, RetrievalContext context) {
+        List<PaperScope> allowed = context.allowedScopes();
+        if (allowed.size() > properties.getMaxPapers()) throw new IllegalArgumentException("检索论文范围超过上限");
+        if (request.requestedPaperIds() == null) return allowed;
+        Set<Long> requested = new HashSet<>(request.requestedPaperIds());
+        Set<Long> allowedIds = new HashSet<>();
+        allowed.forEach(scope -> allowedIds.add(scope.paperId()));
+        if (!allowedIds.containsAll(requested)) throw new IllegalArgumentException("指定论文超出本次运行的资料范围");
+        // 始终保留后端快照的索引、版本和尝试令牌，不从论文当前索引重建范围。
+        return allowed.stream().filter(scope -> requested.contains(scope.paperId())).toList();
+    }
+
+    private void verifyAccess(Long userId, List<PaperScope> scopes) {
+        for (PaperScope scope : scopes) papers.requireOwnedPaper(scope.paperId(), userId);
     }
 
     Object filter(Long userId, List<PaperScope> scopes) {

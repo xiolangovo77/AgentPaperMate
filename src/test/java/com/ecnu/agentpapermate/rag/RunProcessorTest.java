@@ -7,11 +7,15 @@ import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.service.run.rag.RunProcessor;
 import com.ecnu.agentpapermate.service.run.rag.RunQueries;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
+import com.ecnu.agentpapermate.config.rag.RagProperties;
+import com.ecnu.agentpapermate.support.json.RagJson;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -21,12 +25,16 @@ class RunProcessorTest {
     private final RunQueries queries = mock(RunQueries.class);
     private final RagRetriever retriever = mock(RagRetriever.class);
     private final RagAnswerGenerator generator = mock(RagAnswerGenerator.class);
-    private final RunProcessor processor = new RunProcessor(store, queries, retriever, generator);
+    private final RagJson json = new RagJson(new ObjectMapper());
+    private final RunProcessor processor = new RunProcessor(store, queries, retriever, generator, json, new RagProperties());
     private final AgentRun run = new AgentRun();
 
     @BeforeEach
     void setUp() {
         run.setId(1L);
+        run.setUserId(20L); run.setUserQuery("问题");
+        run.setPapersSnapshot(json.write(List.of(RunStoreTest.scope())));
+        run.setDeadline(LocalDateTime.now().plusSeconds(180));
         when(store.retrievalStarted(1L)).thenReturn(true);
         when(store.retrieved(eq(1L), any())).thenReturn(true);
         when(store.modelStarted(1L)).thenReturn(true);
@@ -34,7 +42,7 @@ class RunProcessorTest {
 
     @Test
     void retrievalFailureDoesNotEmitCompletionOrCallModel() {
-        when(retriever.retrieve(run)).thenThrow(new IllegalStateException("secret must not be persisted"));
+        when(retriever.retrieve(any(), any())).thenThrow(new IllegalStateException("secret must not be persisted"));
         processor.process(run);
         verify(store, never()).retrieved(anyLong(), any());
         verify(store).fail(1L, "EXECUTION_FAILED", "检索或模型服务调用失败，请稍后重试", false);
@@ -43,7 +51,7 @@ class RunProcessorTest {
 
     @Test
     void cancellationAfterRetrievalPreventsModelCall() {
-        when(retriever.retrieve(run)).thenReturn(RunStoreTest.retrieval());
+        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.retrieval());
         when(store.retrieved(eq(1L), any())).thenReturn(false);
         processor.process(run);
         verifyNoInteractions(generator);
@@ -52,7 +60,7 @@ class RunProcessorTest {
 
     @Test
     void emptyEvidenceReturnsExplicitInsufficiencyWithoutModelCall() {
-        when(retriever.retrieve(run)).thenReturn(new RetrievalResult(List.of(), List.of()));
+        when(retriever.retrieve(any(), any())).thenReturn(new RetrievalResult(List.of(), List.of()));
         processor.process(run);
         var answer = ArgumentCaptor.forClass(Answer.class);
         verify(store).complete(eq(1L), answer.capture());
@@ -63,7 +71,7 @@ class RunProcessorTest {
 
     @Test
     void timeoutIsDifferentFromExecutionFailure() {
-        when(retriever.retrieve(run)).thenThrow(new RagCalls.RequestTimeout());
+        when(retriever.retrieve(any(), any())).thenThrow(new RagCalls.RequestTimeout());
         processor.process(run);
         verify(store).fail(1L, "REQUEST_TIMEOUT", "外部服务请求超时", true);
     }
@@ -71,7 +79,7 @@ class RunProcessorTest {
     @Test
     void fullCandidatesAreSavedBeforeGeneratingWithOnlyFinalEvidence() {
         var retrieval = RunStoreTest.retrieval();
-        when(retriever.retrieve(run)).thenReturn(retrieval);
+        when(retriever.retrieve(any(), any())).thenReturn(retrieval);
         when(queries.previousQuestions(run)).thenReturn(List.of());
         when(generator.generate(run, retrieval.evidence(), List.of())).thenReturn(RunStoreTest.answer());
         processor.process(run);

@@ -32,8 +32,14 @@ public class RagCalls {
     }
 
     public <T> T call(AgentRun run, Supplier<T> operation) {
+        return call(run.getDeadline(), operation);
+    }
+
+    /** 不依赖持久化实体的调用入口，截止时间必须由后端运行上下文提供。 */
+    public <T> T call(LocalDateTime deadline, Supplier<T> operation) {
+        if (deadline == null) throw new IllegalArgumentException("外部调用缺少截止时间");
         //1、每次调用都同时遵守请求超时和整个 Run 的剩余预算
-        long remaining = Duration.between(LocalDateTime.now(clock), run.getDeadline()).toMillis();
+        long remaining = Duration.between(LocalDateTime.now(clock), deadline).toMillis();
         long budget = Math.min(remaining, properties.getRequestTimeoutSeconds() * 1000L);
         if (budget <= 0) throw new RequestTimeout();
         if (Thread.currentThread().isInterrupted()) throw new CancellationException("任务已停止");

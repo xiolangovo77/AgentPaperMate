@@ -2,6 +2,10 @@ package com.ecnu.agentpapermate.service.run.rag;
 
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
+import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
+import com.ecnu.agentpapermate.rag.model.RetrievalContext;
+import com.ecnu.agentpapermate.config.rag.RagProperties;
+import com.ecnu.agentpapermate.support.json.RagJson;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.validator.AnswerValidator;
@@ -36,12 +40,17 @@ public class RunProcessor {
      * 回答生成器，根据本次证据调用模型并校验回答格式与引用。
      */
     private final RagAnswerGenerator generator;
+    /** 在执行层将持久化快照转换为检索上下文。 */
+    private final RagJson json;
+    private final RagProperties properties;
 
     public void process(AgentRun run) {
         try {
             //1、提交检索开始事件后，执行问题向量化、ES 检索和证据融合
             if (!store.retrievalStarted(run.getId())) return;
-            var retrieval = retriever.retrieve(run);
+            var request = new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
+            var context = new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
+            var retrieval = retriever.retrieve(request, context);
             if (!store.retrieved(run.getId(), retrieval)) return;
             List<Evidence> evidence = retrieval.evidence();
 

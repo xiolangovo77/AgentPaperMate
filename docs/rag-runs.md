@@ -149,6 +149,23 @@ data:{"runId":"123","eventId":"3","type":"retrieval_completed","timestamp":"2026
 
 ## 检索范围和引用
 
+检索入口为 `RagRetriever.retrieve(RetrievalRequest request, RetrievalContext context)`，不再接收 `AgentRun`。执行层负责读取持久化快照、构造后端上下文，检索器只处理本次查询和受限资料范围。
+
+- `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节；topK 为每路候选数量，构造时限制 1 至 100，执行时还必须不超过 `rag.retrieval-top-k`。该配置同时是固定 RAG 的默认值和 Agent 的上限；超限请求在调用外部服务前报错，不静默截断。融合后候选可能多于 topK。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
+- `RetrievalContext(userId, allowedScopes, deadline)`：仅由后端根据当前 Run 构建，不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
+- Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，最后一次 ES 请求返回后再检查一次；普通会话资料调整不会替换启动时快照，删除或撤权则阻止返回结果。
+- 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。旧的 `call(AgentRun, operation)` 委托给这个入口，兼容聊天模型调用。
+
+固定 RAG 在 `RunProcessor` 中这样调用：
+
+```java
+var request = new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
+var context = new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
+var retrieval = retriever.retrieve(request, context);
+```
+
+后续 Agent 可复用该上下文，通过 `new RetrievalRequest("实验中的消融设置和结果", List.of(paperId), 10)` 发起补充查询；paperId 必须属于上下文范围。每次检索均不修改 Run 原始问题。本次未新增工具接口或多轮证据合并，证据 ID 仍按单次检索分配，不能直接将多次结果拼接为同一 Run 的证据集合。
+
 创建任务时锁定聊天室，保存论文 ID、物理 ES 索引、有效索引版本、入库尝试令牌及向量配置。选中论文必须具有可用且与当前 Embedding 模型兼容的索引；最多 50 篇。任务执行期间普通增删资料只影响后续任务；论文实际删除或撤权会在阶段边界及最终写入前阻止继续使用。
 
 BM25 和 kNN 都按用户归属及逐篇快照过滤。kNN 的过滤位于 `knn.filter` 内，保证在近邻检索阶段限定范围，参考 [Elasticsearch 官方过滤示例](https://www.elastic.co/docs/solutions/search/vector/knn/filtered-knn-search)。ES 超时或分片失败不会被当成完整检索结果。

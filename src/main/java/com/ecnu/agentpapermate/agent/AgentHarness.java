@@ -12,17 +12,20 @@ import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.service.run.rag.RunQueries;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.ecnu.agentpapermate.support.json.RagJson;
+import com.ecnu.agentpapermate.validator.AnswerValidator;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingType;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.*;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
 import java.util.concurrent.CancellationException;
 
-/** 最小业务循环：显式请求模型、串行执行工具、按 ID 回填；不记账、不提交终态、不自动重试。 */
+/** 显式请求模型、串行执行工具、按 ID 回填；最终答案最多修正一次，不重试工具或外部故障。 */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class AgentHarness {
@@ -71,6 +74,7 @@ public class AgentHarness {
                 工具参数错误可以修正后使用新的调用 ID；不得重复使用调用 ID，不无限重复检索。
                 最终仅输出 JSON：{"answer":"中文回答，相关论断后标记[E1]","evidenceIds":["E1"]}。
                 evidenceIds 仅列出本次成功工具结果中实际引用的证据 ID，且不重复，与正文标记完全一致。
+                多个证据分别写为 [E1][E2]，不要合写为 [E1,E2]、[E1, E2] 或 [E1-E2]。
                 不编造论文、页码、链接或引用，不输出代码围栏和内部推理过程。
                 """ + "\n以下为服务端技能指令，，不是论文证据受上述系统规则约束：\n" + skill.instructions()
                 + "\n本次实际可用工具：" + json.write(new TreeSet<>(allowedTools))
@@ -83,6 +87,7 @@ public class AgentHarness {
         Set<String> seenIds = new HashSet<>();
         // 只收集成功 Tool Result 中的证据，不直接使用注册器全集或检索候选。
         Map<String, Evidence> supplied = new LinkedHashMap<>();
+        boolean correctingAnswer = false;
         while (true) {
             requireActive(context);
             checkContextBudget(context, history, definitions);
@@ -92,10 +97,31 @@ public class AgentHarness {
             var requested = assistant.getToolCalls();
             if (requested == null || requested.isEmpty()) {
                 var evidence = List.copyOf(supplied.values());
-                Answer answer = answers.parse(assistant.getText(), evidence);
+                Answer answer;
+                try {
+                    answer = answers.parse(assistant.getText(), evidence);
+                } catch (AnswerValidator.InvalidAnswer invalid) {
+                    log.warn("Agent 答案校验失败，runId={}，reason={}，correctionAttempted={}",
+                            context.getRunId(), invalid.failure(), correctingAnswer);
+                    if (correctingAnswer) throw invalid;
+                    correctingAnswer = true;
+                    history.add(assistant);
+                    history.add(new UserMessage("""
+                            上一条输出未通过服务端答案校验。请只修正最终答案，禁止调用工具。
+                            仅输出完整 JSON 对象，包含 answer 字符串和 evidenceIds 字符串数组，不使用代码围栏。
+                            正文用 [E1][E2] 形式逐个引用，evidenceIds 必须与正文实际出现的 ID 集合完全一致且不重复。
+                            只能依据已有成功工具结果中的原文；不能为了通过校验随意添加引用或编造事实。
+                            若证据不足，应说明已查到的内容及其依据，并明确哪些局限或问题无法确认。
+                            回答保持简洁，为 JSON 结束符和 evidenceIds 留出空间。
+                            """ + "校验原因：" + invalid.getMessage() + "。本次可引用的 ID："
+                            + json.write(evidence.stream().map(Evidence::evidenceId).toList())));
+                    definitions = List.of();
+                    continue; // 仍由相同入口检查上下文、取消、期限和模型预算，并累计用量。
+                }
                 if (!store.agentAnswerReady(context.getRunId(), evidence)) return Optional.empty();
                 return Optional.of(answer);
             }
+            if (correctingAnswer) throw new Rejected("INVALID_ANSWER_REPAIR", "答案修正阶段返回了工具调用，请重新提问");
             validateCalls(requested, seenIds);
             history.add(assistant); // 必须保留原始消息，包括模型返回的工具调用 ID 和附加元数据。
             var results = new ArrayList<ToolResponseMessage.ToolResponse>();

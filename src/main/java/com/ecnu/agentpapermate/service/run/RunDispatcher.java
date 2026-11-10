@@ -57,7 +57,8 @@ public class RunDispatcher {
         } catch (RagCalls.RequestTimeout e) {
             store.fail(run.getId(), "REQUEST_TIMEOUT", "外部服务请求超时", true);
         } catch (AnswerValidator.InvalidAnswer e) {
-            store.fail(run.getId(), "INVALID_CITATION", "模型回答格式或引用校验失败，请重新提问", false);
+            log.warn("答案校验失败，runId={}，reason={}", run.getId(), e.failure());
+            store.fail(run.getId(), "INVALID_CITATION", "模型回答校验失败：" + e.getMessage() + "，请重新提问", false);
         } catch (CancellationException e) {
             // 已取消、超时或预算耗尽的 Run 保持原终态；其他中断转为失败。
             store.fail(run.getId(), "EXECUTION_INTERRUPTED", "任务执行被中断", false);

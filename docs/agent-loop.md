@@ -55,7 +55,11 @@ RunScheduler 领取并提交
       → 再检查终态/权限/截止时间/引用 → 助手消息、引用、成功事件及释放会话一次事务提交
 ```
 
-SDK 设置 `proxyToolCalls=true`，没有可执行回调或自动工具 Advisor。Harness 保留原始 AssistantMessage，不重新拼造工具调用；每个 Tool Result 的 ID、名称必须匹配对应调用。模型响应同时含工具与文本时先处理工具，文本不作为最终答案发布。无工具响应必须符合既有答案 JSON 格式，空文本或非法引用失败，不额外请求模型修复。
+SDK 设置 `proxyToolCalls=true`，没有可执行回调或自动工具 Advisor。Harness 保留原始 AssistantMessage，不重新拼造工具调用；每个 Tool Result 的 ID、名称必须匹配对应调用。模型响应同时含工具与文本时先处理工具，文本不作为最终答案发布。
+
+无工具响应必须符合既有答案 JSON 格式。首次格式或引用校验失败时，Harness 保留原响应和成功工具证据，反馈固定校验原因与可用证据 ID，最多显式请求一次修正。修正轮不提供工具，若仍返回工具调用则以 `INVALID_ANSWER_REPAIR` 失败；若答案仍不合格则以 `INVALID_CITATION` 失败。修正前后继续检查取消、权限、期限及上下文预算，调用次数和 Token 均由原入口登记，不重跑检索、不补造引用、不发布未经校验的正文。固定 RAG 的模型调用次数不变。
+
+校验失败日志包含 runId 和固定原因码（JSON、结构、未知证据、重复证据、缺少引用或正文标记不一致），不记录模型原文。最终失败提示包含对应原因，旧失败记录保持原样。
 
 RunDispatcher 是执行结果与异常的统一协调入口；Harness 和 Executor 不调用 complete/fail，不另建上下文，不重试整轮。RunStore 仍是唯一状态事务实现。取消、扫描超时、预算耗尽仍在既有事务入口仲裁，Dispatcher 的后续中断报告不会覆盖已经提交的终态。
 

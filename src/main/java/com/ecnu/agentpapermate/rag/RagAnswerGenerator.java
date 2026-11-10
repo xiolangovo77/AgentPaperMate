@@ -76,7 +76,7 @@ public class RagAnswerGenerator {
             AnswerValidator.validate(answer, evidence);
             return answer;
         } catch (IllegalArgumentException e) {
-            throw new AnswerValidator.InvalidAnswer();
+            throw new AnswerValidator.InvalidAnswer(AnswerValidator.Failure.INVALID_JSON);
         }
     }
 }

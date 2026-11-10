@@ -314,16 +314,87 @@ class AgentHarnessHttpTest {
     void fabricatedCitationCannotBePublished() {
         replies.add(selection(search("s1")));
         replies.add(answer("编造来源[E999]", "E999"));
+        replies.add(answer("仍然编造来源[E999]", "E999"));
         dispatcher.dispatch(run);
+        assertEquals(3, requests.size());
         verify(store).fail(eq(40L), eq("INVALID_CITATION"), anyString(), eq(false));
+        verify(store, never()).agentAnswerReady(anyLong(), any());
         verify(store, never()).complete(anyLong(), any());
     }
 
     @Test
     void emptyModelOutputFailsValidation() {
         replies.add(Map.of("role", "assistant", "content", ""));
+        replies.add(Map.of("role", "assistant", "content", ""));
         dispatcher.dispatch(run);
+        assertEquals(2, requests.size());
         verify(store).fail(eq(40L), eq("INVALID_CITATION"), anyString(), eq(false));
+        verify(store, never()).complete(anyLong(), any());
+    }
+
+    @Test
+    void malformedFinalJsonGetsOneCountedCorrectionWithSameEvidenceAndNoTools() {
+        replies.add(selection(search("s1")));
+        replies.add(Map.of("role", "assistant", "content", "```json\n{\"answer\":\"局限[E1]\",\"evidenceIds\":[\"E1\"]}\n```"));
+        replies.add(answer("局限及仍需研究的问题[E1]", "E1"));
+        dispatcher.dispatch(run);
+        assertEquals(3, requests.size());
+        var correction = requests.getLast();
+        assertTrue(correction.at("/parameters/tools").isMissingNode()
+                || correction.at("/parameters/tools").isNull() || correction.at("/parameters/tools").isEmpty());
+        var messages = correction.at("/input/messages");
+        assertTrue(messages.get(messages.size() - 1).toString().contains("回答不是完整的 JSON 对象"));
+        assertTrue(messages.get(messages.size() - 2).toString().contains("```json"));
+        assertTrue(messages.toString().contains("原文"));
+        verify(store, times(3)).modelCallStarted(40L);
+        verify(store, times(3)).addModelUsage(40L, 10L, 20L);
+        verify(retriever, times(1)).retrieve(any(), any(), any());
+        verify(store, times(1)).agentAnswerReady(eq(40L), any());
+        verify(store).complete(40L, new Answer("局限及仍需研究的问题[E1]", List.of("E1")));
+        verify(store, never()).fail(anyLong(), anyString(), anyString(), anyBoolean());
+    }
+
+    @Test
+    void citationMismatchIsCorrectedWithoutInventingEvidence() {
+        replies.add(selection(search("s1")));
+        replies.add(answer("局限见原文", "E1"));
+        replies.add(answer("局限见原文[E1]", "E1"));
+        dispatcher.dispatch(run);
+        assertTrue(requests.getLast().at("/input/messages").toString().contains("正文 [E编号] 标记与 evidenceIds 不一致"));
+        verify(store).complete(40L, new Answer("局限见原文[E1]", List.of("E1")));
+    }
+
+    @Test
+    void correctionCannotStartWhenModelBudgetIsExhausted() {
+        replies.add(Map.of("role", "assistant", "content", "not JSON"));
+        when(store.modelCallStarted(40L)).thenReturn(true, false);
+        dispatcher.dispatch(run);
+        assertEquals(1, requests.size());
+        verify(store, times(2)).modelCallStarted(40L);
+        verify(store, times(1)).addModelUsage(40L, 10L, 20L);
+        verify(store, never()).complete(anyLong(), any());
+    }
+
+    @Test
+    void cancelledCorrectionDoesNotPublishLateAnswer() {
+        replies.add(Map.of("role", "assistant", "content", "not JSON"));
+        replies.add(answer("无法确认"));
+        doNothing().doAnswer(call -> { active.set(false); return null; })
+                .when(store).addModelUsage(40L, 10L, 20L);
+        dispatcher.dispatch(run);
+        assertEquals(2, requests.size());
+        verify(store, never()).agentAnswerReady(anyLong(), any());
+        verify(store, never()).complete(anyLong(), any());
+    }
+
+    @Test
+    void correctionCannotExecuteToolsEvenIfModelReturnsThem() {
+        replies.add(Map.of("role", "assistant", "content", "not JSON"));
+        replies.add(selection(search("unexpected")));
+        dispatcher.dispatch(run);
+        verifyNoInteractions(papers, retriever);
+        verify(store, never()).toolCallStarted(anyLong(), anyString(), anyString());
+        verify(store).fail(eq(40L), eq("INVALID_ANSWER_REPAIR"), anyString(), eq(false));
         verify(store, never()).complete(anyLong(), any());
     }
 

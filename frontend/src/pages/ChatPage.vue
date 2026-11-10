@@ -7,19 +7,24 @@ import { messageOf } from '../api/request'
 import type { Message, Session } from '../types/api'
 import { dateTime, validId } from '../utils/format'
 import { stageLabels, terminal } from '../utils/runObserver'
+import { executorLabels } from '../utils/runProgress'
 import { useChat } from '../composables/useChat'
 import { paperTitle } from '../utils/papers'
 import Feedback from '../components/Feedback.vue'
 import Modal from '../components/Modal.vue'
 import ScopeManager from '../components/ScopeManager.vue'
 import MessageBubble from '../components/MessageBubble.vue'
+import RunProgress from '../components/RunProgress.vue'
 const route = useRoute(), router = useRouter(), chat = useChat()
 const { session, papers, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, connection, runError, active, uncertain, submitting, cancelling, exporting } = chat
 const { paperInfo, allReady, checkingPapers, readinessError } = chat
+const { executorType, runEvents } = chat
 const sessions = ref<Session[]>([]), listPage = ref(1), listPages = ref(1), listBusy = ref(false), listError = ref(''), listQuery = ref('')
 const switcher = ref(false), showScope = ref(false), modal = ref<'create' | 'rename' | 'delete' | null>(null), modalValue = ref(''), modalError = ref(''), modalBusy = ref(false)
 const messagesElement = ref<HTMLElement>(), switcherElement = ref<HTMLElement>()
-const prompts = ['总结核心研究问题与创新点', '对比方法与实验结论', '有哪些局限和值得继续研究的问题？']
+const prompts = computed(() => executorType.value === 'agent'
+  ? [...(papers.value.length === 1 ? ['请总结这篇论文的研究背景、问题、方法、创新、实验与局限'] : []), '论文的核心研究问题与创新点是什么？', '有哪些局限和值得继续研究的问题？']
+  : ['总结核心研究问题与创新点', '对比方法与实验结论', '有哪些局限和值得继续研究的问题？'])
 const selectedId = computed(() => typeof route.params.id === 'string' && route.params.id ? route.params.id : undefined)
 const canSend = computed(() => !!session.value && !!draft.value.trim() && allReady.value && !active.value && !submitting.value && !uncertain.value)
 let listEpoch = 0, searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -65,7 +70,7 @@ function keydown(event: KeyboardEvent) {
 function retry(message: Message) {
   if (active.value || submitting.value || uncertain.value) { error.value = '请先等待或处理当前任务。'; return }
   if (!papers.value.length) { error.value = '请先添加论文。'; return }
-  if (window.confirm('将使用聊天室当前资料范围重新执行这个问题，是否继续？')) void chat.send(message)
+  if (window.confirm(`将使用${executorLabels[executorType.value]}和聊天室当前资料范围重新执行这个问题，是否继续？`)) void chat.send(message)
 }
 function outside(event: MouseEvent) { if (switcher.value && !switcherElement.value?.contains(event.target as Node)) switcher.value = false }
 function escape(event: KeyboardEvent) { if (event.key === 'Escape') switcher.value = false }
@@ -119,7 +124,17 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
           </div>
           <div v-if="active || run" class="run-state" :class="run?.status" role="status"><LoaderCircle v-if="active" :size="15" class="spin" /><span>{{ stageLabels[stage] || (run ? stageLabels[run.status] : '正在查询任务') }}<small v-if="active && connection === 'reconnecting'"> · 正在恢复连接</small></span><button v-if="active" class="btn small" :disabled="cancelling" @click="chat.cancel()"><Square :size="11" />{{ cancelling ? '正在取消…' : '停止任务' }}</button><span v-if="run?.errorMessage" class="run-detail">{{ run.errorMessage }}</span></div>
           <div v-if="runError" class="notice error">任务状态查询失败：{{ runError }}<span v-if="active">，正在尝试恢复。</span></div>
+          <RunProgress :events="runEvents" :status="run?.status" />
           <div class="chat-composer">
+            <div class="execution-mode">
+              <label for="executor-type">回答模式</label>
+              <select id="executor-type" v-model="executorType" class="select" :disabled="active || submitting || !!uncertain" aria-describedby="executor-hint">
+                <option value="rag">RAG 检索问答</option>
+                <option value="agent">Agent 自主问答</option>
+              </select>
+            </div>
+            <p id="executor-hint" class="execution-hint">{{ executorType === 'agent' ? '按问题自动选择问答或总结技能，按需多次读取论文信息、检索原文。结构化总结目前仅支持单篇论文。' : '检索所选论文的相关证据后生成回答。' }}</p>
+            <p v-if="executorType === 'agent' && papers.length > 1" class="execution-hint">需要结构化总结时，请先将资料范围调整为一篇论文。</p>
             <div v-if="uncertain" class="notice"><div>上次提交结果尚未确认。恢复将复用原请求，不会重复创建任务。<button class="text-link" :disabled="submitting" @click="chat.send()">{{ submitting ? '正在确认…' : '确认提交结果' }}</button></div></div>
             <div class="quick-prompts"><button v-for="prompt in prompts" :key="prompt" class="quick-prompt" :disabled="submitting || !!uncertain" @click="draft = prompt">{{ prompt }}</button></div>
             <div class="composer-box"><textarea v-model="draft" rows="2" aria-label="研究问题" :placeholder="papers.length ? '围绕这些论文，提出你的问题…' : '先添加论文，再开始讨论…'" :disabled="submitting || !!uncertain" @keydown="keydown"></textarea><button class="btn primary" aria-label="发送问题" :disabled="!canSend" @click="chat.send()"><Send :size="16" /></button></div>
@@ -133,3 +148,9 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
     <Modal v-if="modal" :title="modal === 'create' ? '新建聊天室' : modal === 'rename' ? '重命名聊天室' : '删除聊天室'" :busy="modalBusy" @close="modal = null"><form @submit.prevent="confirm"><Feedback :error="modalError" /><template v-if="modal !== 'delete'"><label class="form-label" for="session-name">会话名称</label><input id="session-name" v-model="modalValue" class="field rename-input" maxlength="200" :required="modal === 'rename'" placeholder="例如：Agent 记忆机制研究" :disabled="modalBusy" /><p class="scope-warning">{{ modal === 'create' ? '创建后添加论文，开始独立的研究讨论。' : '修改名称不会影响消息或论文范围。' }}</p></template><p v-else>将删除「{{ session?.name }}」及其聊天记录。若存在活动任务，会先取消并确认任务结束。论文和阅读笔记保留，此操作不可撤销。</p><div class="dialog-actions"><button type="button" class="btn" :disabled="modalBusy" @click="modal = null">取消</button><button class="btn" :class="modal === 'delete' ? 'danger' : 'primary'" :disabled="modalBusy">{{ modalBusy ? '正在处理…' : modal === 'delete' ? '确认删除' : modal === 'create' ? '创建聊天室' : '保存名称' }}</button></div></form></Modal>
   </div>
 </template>
+
+<style scoped>
+.execution-mode { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+.execution-mode select { max-width: 100%; }
+.execution-hint { font-size: 11px; line-height: 1.8; color: var(--muted); margin: 8px 0 12px; }
+</style>

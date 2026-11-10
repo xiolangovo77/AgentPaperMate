@@ -259,6 +259,19 @@ class AgentHarnessHttpTest {
     }
 
     @Test
+    void expandedContextBudgetAcceptsHistoryBeyondPreviousLimit() {
+        var properties = new RagProperties();
+        assertDoesNotThrow(properties::validate);
+        configure("{\"maxTokens\":1024,\"agentContextTokenBudget\":240000}");
+        when(queries.previousQuestions(any())).thenReturn(List.of("x ".repeat(30000)));
+        replies.add(answer("请明确希望查阅的问题"));
+        dispatcher.dispatch(run);
+        assertEquals(1, requests.size());
+        verify(store).complete(40L, new Answer("请明确希望查阅的问题", List.of()));
+        verify(store, never()).fail(anyLong(), anyString(), anyString(), anyBoolean());
+    }
+
+    @Test
     void contextBudgetStopsBeforeModelRequest() {
         configure("{\"maxTokens\":1024,\"agentContextTokenBudget\":1024}");
         dispatcher.dispatch(run);
@@ -269,6 +282,7 @@ class AgentHarnessHttpTest {
 
     @Test
     void growingToolHistoryStopsBeforeNextModelAndDoesNotPublish() {
+        configure("{\"maxTokens\":1024,\"agentContextTokenBudget\":24000}");
         replies.add(selection(tool("meta", "get_paper_metadata", "{\"paperId\":\"30\"}")));
         var large = new Paper(); large.setAuthors("author ".repeat(30000));
         when(papers.requireOwnedPaper(30L, 20L)).thenReturn(large);

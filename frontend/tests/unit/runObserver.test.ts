@@ -24,6 +24,25 @@ function setup() {
 }
 afterEach(() => { vi.useRealTimers() })
 describe('committed Run event recovery', () => {
+  it('accepts named skill and tool events without waiting for a polling recovery', async () => {
+    const state = setup(); await flush()
+    for (const [index, type] of ['skill_selected', 'tool_started', 'tool_completed', 'tool_failed'].entries()) {
+      state.streams[0]!.emit(type, event(String(index + 1), type))
+    }
+    expect(state.onEvent.mock.calls.map(call => call[0].type)).toEqual(['skill_selected', 'tool_started', 'tool_completed', 'tool_failed'])
+    expect(state.getEvents).toHaveBeenCalledTimes(1)
+    state.observer.stop()
+  })
+  it('replays more than 100 events before stopping on an already completed Agent run', async () => {
+    const state = setup(); await flush()
+    state.getEvents.mockResolvedValueOnce(Array.from({ length: 100 }, (_, index) => event(String(index + 1), 'tool_started')))
+      .mockResolvedValueOnce([event('101', 'tool_completed'), event('102', 'run_completed')])
+    state.getRun.mockResolvedValue(run('completed', '102'))
+    await state.observer.refresh()
+    expect(state.getEvents).toHaveBeenLastCalledWith('100')
+    expect(state.onEvent).toHaveBeenCalledTimes(102)
+    expect(state.onConnection).toHaveBeenLastCalledWith('stopped')
+  })
   it('deduplicates events and reconnects using the last committed sequence without creating a Run', async () => {
     const state = setup(); await flush()
     state.streams[0]!.emit('retrieval_started', event('1'))

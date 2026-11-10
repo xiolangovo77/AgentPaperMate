@@ -145,7 +145,7 @@ public class AgentHarness {
             if (!value.isIntegralNumber() || !value.canConvertToInt()) throw new IllegalStateException("上下文预算快照无效");
             limit = value.intValue();
         }
-        if (limit < 1024 || limit > 128000) throw new IllegalStateException("上下文预算快照越界");
+        if (limit < 1024 || limit > 240000) throw new IllegalStateException("上下文预算快照越界");
         long tokens = config.path("maxTokens").asInt(2048) + 256L;
         for (var definition : definitions) tokens += encoding.countTokens(json.write(definition));
         for (var message : history) {

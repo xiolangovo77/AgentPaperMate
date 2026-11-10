@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { messageApi, runApi, sessionApi } from '../api'
 import { apiBase, ApiError, messageOf } from '../api/request'
-import type { Message, Run, Session, SessionPaper, PaperDetail } from '../types/api'
+import type { Message, Run, RunEvent, ExecutorType, Session, SessionPaper, PaperDetail } from '../types/api'
 import { useChatStore } from '../stores/chat'
 import { downloadMarkdown } from '../utils/format'
 import { observeRun, terminal } from '../utils/runObserver'
@@ -15,6 +15,7 @@ export function useChat() {
   const loading = ref(false), error = ref(''), draft = ref(''), savedDraft = ref(''), draftError = ref(''), savingDraft = ref(false)
   const messagePage = ref(1), messagePages = ref(1), moreBusy = ref(false), messageError = ref('')
   const run = ref<Run | null>(null), stage = ref(''), connection = ref('stopped'), runError = ref(''), runId = ref('')
+  const executorType = ref<ExecutorType>('rag'), runEvents = ref<RunEvent[]>([])
   const submitting = ref(false), cancelling = ref(false), exporting = ref(false)
   const active = computed(() => !!runId.value && (!run.value || !terminal(run.value.status)))
   const uncertain = computed(() => session.value ? recovery.pending[session.value.id] : undefined)
@@ -68,7 +69,7 @@ export function useChat() {
     } catch (e) { if (token === epoch && scopeToken === scopeEpoch) error.value = messageOf(e) }
   }
   function observe(id: string) {
-    observer?.stop(); runId.value = id; const token = epoch
+    observer?.stop(); runEvents.value = []; runId.value = id; const token = epoch
     observer = observeRun({
       runId: id, apiBase,
       getRun: () => runApi.get(id), getEvents: cursor => runApi.events(id, cursor),
@@ -81,7 +82,11 @@ export function useChat() {
           void refreshScope()
         }
       },
-      onEvent: event => { if (token === epoch) { stage.value = event.type; runError.value = '' } },
+      onEvent: event => {
+        if (token !== epoch) return
+        runEvents.value.push(event); stage.value = event.type; runError.value = ''
+        if (event.type === 'skill_selected' && active.value) executorType.value = 'agent'
+      },
       onConnection: value => { if (token === epoch) connection.value = value },
       onError: e => { if (token === epoch) runError.value = messageOf(e) },
     })
@@ -93,6 +98,7 @@ export function useChat() {
     clearTimeout(readinessTimer); readinessEpoch++; paperInfo.value = {}; readinessError.value = ''; checkingPapers.value = false
     session.value = null; messages.value = []; papers.value = []; error.value = ''; messageError.value = ''; draftError.value = ''
     draft.value = ''; savedDraft.value = ''; run.value = null; runId.value = ''; runError.value = ''; stage.value = ''; lastTerminal = ''; moreBusy.value = false
+    runEvents.value = []; executorType.value = (id && recovery.pending[id]?.executorType) || 'rag'
     if (!id) { loading.value = false; return }
     loading.value = true
     try {
@@ -111,7 +117,7 @@ export function useChat() {
             const previous = await runApi.get(lastRunId)
             if (token !== epoch) return
             run.value = previous; runId.value = previous.runId; stage.value = previous.status; lastTerminal = `${lastRunId}:${previous.status}`
-            if (!terminal(previous.status)) observe(lastRunId)
+            observe(lastRunId)
           } catch (e) { if (token === epoch) runError.value = messageOf(e) }
         }
       }
@@ -137,7 +143,7 @@ export function useChat() {
 
   async function send(retry?: Message) {
     if (!session.value || submitting.value || active.value) return
-    const id = session.value.id, token = epoch, question = uncertain.value?.question || retry?.content || draft.value.trim()
+    const id = session.value.id, token = epoch, question = uncertain.value?.question || retry?.content || draft.value.trim(), selectedExecutor = executorType.value
     error.value = ''
     if (!uncertain.value && (!question || !papers.value.length)) return
     if (new TextEncoder().encode(question).length > 16000) { error.value = '问题不能超过 16000 个 UTF-8 字节，请缩短内容。'; return }
@@ -158,7 +164,7 @@ export function useChat() {
         if (!terminal(previous.status)) throw new Error('该问题仍在执行，请等待完成或先取消任务。')
       }
       // Preserve the exact body on ambiguous transport failures; retry uses the SAME key.
-      if (!recovery.pending[id]) recovery.pending[id] = { sessionId: id, requestKey: await runApi.key(), question, ...(retry?.runId ? { retryOfRunId: retry.runId } : {}) }
+      if (!recovery.pending[id]) recovery.pending[id] = { sessionId: id, requestKey: await runApi.key(), question, executorType: selectedExecutor, ...(retry?.runId ? { retryOfRunId: retry.runId } : {}) }
       createdId = await runApi.create(recovery.pending[id]!)
       delete recovery.pending[id]
     } catch (e) {
@@ -208,5 +214,5 @@ export function useChat() {
   function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || submitting.value || uncertain.value) { event.preventDefault(); event.returnValue = '' } }
   window.addEventListener('beforeunload', beforeUnload)
   onBeforeUnmount(() => { epoch++; observer?.stop(); clearTimeout(draftTimer); clearTimeout(readinessTimer); window.removeEventListener('beforeunload', beforeUnload) })
-  return { session, papers, paperInfo, allReady, checkingPapers, readinessError, checkReadiness, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
+  return { session, papers, paperInfo, allReady, checkingPapers, readinessError, checkReadiness, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, runEvents, executorType, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
 }

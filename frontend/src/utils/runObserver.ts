@@ -1,9 +1,11 @@
 import type { Run, RunEvent } from '../types/api'
 export const terminal = (status: string) => ['completed', 'failed', 'cancelled', 'timeout'].includes(status)
-export const eventTypes = ['run_started', 'retrieval_started', 'retrieval_completed', 'run_completed', 'run_failed', 'run_cancelled', 'run_timeout']
+export const eventTypes = ['run_started', 'skill_selected', 'tool_started', 'tool_completed', 'tool_failed', 'retrieval_started', 'retrieval_completed', 'run_completed', 'run_failed', 'run_cancelled', 'run_timeout']
 export const stageLabels: Record<string, string> = {
   pending: '任务已提交，等待执行', running: '任务正在执行', run_started: '正在准备资料',
-  retrieval_started: '正在检索论文证据', retrieval_completed: '检索完成，正在生成并校验答案',
+  retrieval_started: '正在检索论文证据', retrieval_completed: '检索完成，正在分析证据',
+  skill_selected: '已选择技能，正在分析问题', tool_started: '正在调用论文工具',
+  tool_completed: '工具执行完成，正在继续分析', tool_failed: '本次工具调用失败，等待后续处理',
   completed: '回答已完成', failed: '任务失败', cancelled: '任务已取消', timeout: '任务超时',
 }
 interface Stream {
@@ -55,9 +57,16 @@ export function observeRun(options: Options) {
     options.onConnection('reconnecting')
     try {
       // Replay before querying the snapshot, so terminal status and missing events are both handled.
-      const events = await options.getEvents(cursor)
-      if (stopped || token !== generation) return
-      for (const event of events) accept(event)
+      let events: RunEvent[]
+      // Agent runs can exceed the backend's 100-event page. Replay all available
+      // pages before a terminal snapshot stops observation.
+      do {
+        const before = cursor
+        events = await options.getEvents(cursor)
+        if (stopped || token !== generation) return
+        for (const event of events) accept(event)
+        if (cursor === before) break
+      } while (events.length >= 100)
       const run = await options.getRun()
       if (stopped || token !== generation) return
       snapshot(run)

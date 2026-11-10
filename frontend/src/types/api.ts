@@ -18,9 +18,10 @@ export interface PaperScope { sessionId: Id; paperIds: Id[]; scopeVersion: numbe
 export interface Message { id: Id; sessionId: Id; runId?: Id; role: string; messageType: string; content: string; extraData?: string; createTime: string }
 export interface Citation { id: Id; messageId: Id; evidenceId: string; paperId: Id; paperTitle: string; pageStart: number; pageEnd: number; quotedText: string; sourceLocation?: string }
 export type RunStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout'
-export interface Run { runId: Id; sessionId: Id; status: RunStatus; eventSeq: string; errorCode?: string; errorMessage?: string; answer?: Message | null; citations: Citation[] }
+export type ExecutorType = 'rag' | 'agent'
+export interface Run { runId: Id; sessionId: Id; status: RunStatus; eventSeq: string; startTime?: string | null; endTime?: string | null; deadline?: string | null; errorCode?: string; errorMessage?: string; answer?: Message | null; citations: Citation[] }
 export interface RunEvent { runId: Id; eventId: string; type: string; timestamp: string; payload: Record<string, unknown> }
-export interface RunCreate { sessionId: Id; requestKey: string; question: string; retryOfRunId?: Id }
+export interface RunCreate { sessionId: Id; requestKey: string; question: string; executorType?: ExecutorType; retryOfRunId?: Id }
 export const noteFields = [
   ['researchQuestion', '研究问题', '这篇论文试图解决什么问题？'],
   ['methods', '技术方法', '记录方法、模型架构和关键实现。'],

@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
 import { pdfFixture } from './pdf-fixture'
+import type { RunEvent } from '../../src/types/api'
 
 // Explicit browser-test fixtures. None of this data is imported by the application.
 const sessionId = '9223372036854775001', paperId = '9223372036854775002'
@@ -17,6 +18,7 @@ async function fixtures(page: Page) {
     failCreate: false, conflict: false, expire: false, runStatus: 'running',
     unhandled: [] as string[],
     canAsk: true,
+    runEvents: [] as RunEvent[],
   }
   await page.route('**/api/**', async (route: Route) => {
     if (!new URL(route.request().url()).pathname.startsWith('/api/')) return route.continue()
@@ -62,9 +64,12 @@ async function fixtures(page: Page) {
       state.messages = [{ id: '701', sessionId, role: 'user', runId: '700', messageType: 'text', content: body.question, createTime: '2026-11-07T12:00:00' }]
       return ok('700')
     }
-    if (path === '/agentRun/get') return ok({ runId: '700', sessionId, status: state.runStatus, eventSeq: '0', citations: [] })
+    if (path === '/agentRun/get') return ok({ runId: '700', sessionId, status: state.runStatus, eventSeq: state.runEvents.at(-1)?.eventId || '0', citations: [] })
     if (path === '/agentRun/cancel') { state.runStatus = 'cancelled'; state.session.activeRunId = null; return ok('cancelled') }
-    if (path === '/runEvent/list') return ok([])
+    if (path === '/runEvent/list') {
+      const after = new URL(request.url()).searchParams.get('afterEventSeq') || '0'
+      return ok(state.runEvents.filter(event => BigInt(event.eventId) > BigInt(after)).slice(0, 100))
+    }
     if (path === '/agentRun/events') return route.fulfill({ contentType: 'text/event-stream', body: ': heartbeat\n\n' })
     if (path === '/messageCitation/list') return ok([{ id: '702', messageId: '701', evidenceId: 'E1', paperId, paperTitle: '已校验的引用标题', pageStart: 3, pageEnd: 4, quotedText: '来自论文的真实格式摘录。', sourceLocation: 'Methods' }])
     state.unhandled.push(path)
@@ -147,16 +152,89 @@ test('chat drafts, atomic empty scope and responsive room', async ({ page }) => 
 test('ambiguous Run creation retries the same idempotency key and cancel uses the backend', async ({ page }) => {
   const state = await fixtures(page); state.failCreate = true
   await page.goto(`/chat/${sessionId}`)
+  await page.getByLabel('回答模式').selectOption('agent')
   await page.getByRole('textbox', { name: '研究问题', exact: true }).fill('总结论文')
   await page.getByRole('button', { name: '发送问题' }).click()
   await expect(page.getByRole('button', { name: '确认提交结果' })).toBeVisible()
+  await expect(page.getByLabel('回答模式')).toBeDisabled()
   await page.getByRole('button', { name: '确认提交结果' }).click()
   await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
   expect(state.creates).toHaveLength(2)
   expect(state.creates[0]).toEqual(state.creates[1])
+  expect(state.creates[0]?.executorType).toBe('agent')
   await page.getByRole('button', { name: '停止任务' }).click()
   await expect(page.getByText('任务已取消', { exact: true })).toBeVisible()
   expect(state.runStatus).toBe('cancelled')
+})
+
+test('defaults to RAG and uses the selected mode for an explicit historical retry', async ({ page }) => {
+  const state = await fixtures(page)
+  await page.goto(`/chat/${sessionId}`)
+  await expect(page.getByLabel('回答模式')).toHaveValue('rag')
+  await page.getByRole('textbox', { name: '研究问题', exact: true }).fill('论文的方法是什么？')
+  await page.getByRole('button', { name: '发送问题' }).click()
+  await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
+  expect(state.creates[0]?.executorType).toBe('rag')
+  await expect(page.getByLabel('回答模式')).toBeDisabled()
+  await page.getByRole('button', { name: '停止任务' }).click()
+  await expect(page.getByLabel('回答模式')).toBeEnabled()
+  await page.getByLabel('回答模式').selectOption('agent')
+  page.once('dialog', async dialog => {
+    expect(dialog.message()).toContain('Agent 自主问答')
+    await dialog.accept()
+  })
+  await page.getByRole('button', { name: '重新执行此问题' }).click()
+  await expect.poll(() => state.creates.length).toBe(2)
+  expect(state.creates[1]).toMatchObject({ executorType: 'agent', retryOfRunId: '700', question: '论文的方法是什么？' })
+  expect(state.unhandled).toEqual([])
+})
+
+test('restores Agent skill and tool progress on reload and stops unfinished tools on cancel', async ({ page }) => {
+  const state = await fixtures(page)
+  state.session.activeRunId = '700'
+  const addEvent = (type: string, payload: Record<string, unknown>) => state.runEvents.push({ runId: '700', eventId: String(state.runEvents.length + 1), type, timestamp: '', payload })
+  addEvent('run_started', { status: 'running' })
+  addEvent('skill_selected', { skillId: 'paper-summary', version: '1.0.0', contentHash: 'test' })
+  addEvent('tool_started', { callId: 'a', toolName: 'get_paper_metadata' })
+  addEvent('tool_completed', { callId: 'a', toolName: 'get_paper_metadata', elapsedMs: '12' })
+  addEvent('tool_started', { callId: 'b', toolName: 'search_paper_chunks' })
+  addEvent('tool_failed', { callId: 'b', toolName: 'search_paper_chunks', elapsedMs: 20, errorCode: 'INVALID_ARGUMENT' })
+  addEvent('tool_started', { callId: 'c', toolName: 'search_paper_chunks' })
+  await page.goto(`/chat/${sessionId}`)
+  await expect(page.locator('.skill-selection')).toHaveText('已选择技能：单篇论文总结')
+  await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
+  await expect(page.locator('.run-progress .failed')).toContainText('INVALID_ARGUMENT')
+  await expect(page.locator('.run-progress .completed')).toContainText('12 ms')
+  await page.reload()
+  await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
+  await expect(page.getByLabel('回答模式')).toHaveValue('agent')
+  await page.screenshot({ path: 'test-results/agent-progress-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: 'test-results/agent-progress-mobile.png', fullPage: true })
+  await page.getByRole('button', { name: '停止任务' }).click()
+  await expect(page.locator('.run-progress .running')).toHaveCount(0)
+  await expect(page.locator('.run-progress')).toContainText('任务已结束，未收到工具结果')
+  state.messages = [{ id: '701', sessionId, role: 'user', runId: '700', messageType: 'text', content: '总结论文', createTime: '2026-11-07T12:00:00' }]
+  await page.reload()
+  await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
+  await expect(page.locator('.run-progress .running')).toHaveCount(0)
+  expect(state.unhandled).toEqual([])
+})
+
+test('offers single-paper Agent summary and guides multi-paper scope without blocking questions', async ({ page }) => {
+  const state = await fixtures(page)
+  await page.goto(`/chat/${sessionId}`)
+  await page.getByLabel('回答模式').selectOption('agent')
+  await page.getByRole('button', { name: '请总结这篇论文的研究背景、问题、方法、创新、实验与局限', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '研究问题', exact: true })).toHaveValue('请总结这篇论文的研究背景、问题、方法、创新、实验与局限')
+  state.papers.push({ id: '601', sessionId, paperId: '900' })
+  await page.reload()
+  await page.getByLabel('回答模式').selectOption('agent')
+  await expect(page.getByText('需要结构化总结时，请先将资料范围调整为一篇论文。', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '请总结这篇论文的研究背景、问题、方法、创新、实验与局限', exact: true })).toHaveCount(0)
+  await page.getByRole('textbox', { name: '研究问题', exact: true }).fill('两篇论文的方法有什么区别？')
+  await expect(page.getByRole('button', { name: '发送问题' })).toBeEnabled()
 })
 
 test('sanitizes answers and uses verified citations for physical-page links', async ({ page }) => {

@@ -129,7 +129,7 @@ class RunStoreTest {
         assertEquals(skill.id(), captured.getValue().getSkillId());
         assertEquals(skill.version(), captured.getValue().getSkillVersion());
         assertEquals(skill.contentHash(), captured.getValue().getSkillContentHash());
-        assertEquals(24000, json.tree(captured.getValue().getModelConfig()).path("agentContextTokenBudget").asInt());
+        assertEquals(240000, json.tree(captured.getValue().getModelConfig()).path("agentContextTokenBudget").asInt());
         when(runs.selectOne(any())).thenReturn(captured.getValue());
         assertEquals(40L, store.create(request, 20L));
         request.setExecutorType(null);

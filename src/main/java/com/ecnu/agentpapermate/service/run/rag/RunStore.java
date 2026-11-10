@@ -114,7 +114,8 @@ public class RunStore {
         run.setExecutionPhase("queued");
         run.setPapersSnapshot(json.write(scope)); run.setModelName(properties.getModel());
         run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2,
-                "maxModelCalls", properties.getMaxModelCalls())));
+                "maxModelCalls", properties.getMaxModelCalls(), "maxToolCalls", properties.getMaxToolCalls(),
+                "toolTimeoutSeconds", properties.getToolTimeoutSeconds())));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);
         run.setStepCount(0); run.setToolCallCount(0); run.setIsDelete((byte) 0);
         changed(runs.insert(run));
@@ -223,6 +224,78 @@ public class RunStore {
         run.setStepCount(Math.addExact(run.getStepCount(), 1));
         changed(runs.updateById(run));
         return true;
+    }
+
+    /** 工具执行前后复用的存活、截止时间和权限检查，不累计模型或工具次数。 */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean executionAllowed(Long id) {
+        AgentRun run = live(id);
+        if (run == null) return false;
+        verifyAccess(run);
+        return true;
+    }
+
+    /** 在尝试执行工具前登记一次调用和开始事件；执行者不得重复调用此方法。 */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean toolCallStarted(Long id, String callId, String toolName) {
+        if (callId == null || callId.isBlank() || callId.length() > 128
+                || toolName == null || !toolName.matches("[a-z][a-z0-9_]{0,63}")) {
+            throw new IllegalArgumentException("工具调用标识或名称无效");
+        }
+        AgentRun run = live(id);
+        if (run == null) return false;
+        verifyAccess(run);
+        // Run 行锁串行化同一任务的调用登记；进度事件也是调用 ID 的持久化去重依据。
+        var started = events.selectList(new QueryWrapper<RunEvent>().eq("run_id", id).eq("event_type", "tool_started"));
+        if (started.stream().anyMatch(event -> callId.equals(json.tree(event.getPayload()).path("callId").asText()))) {
+            throw new DuplicateToolCall();
+        }
+        int limit = properties.getMaxToolCalls();
+        var config = run.getModelConfig() == null ? null : json.tree(run.getModelConfig());
+        if (config != null && config.has("maxToolCalls")) {
+            var value = config.get("maxToolCalls");
+            if (!value.isIntegralNumber() || !value.canConvertToInt()) throw new IllegalStateException("工具预算快照无效");
+            limit = value.intValue();
+        }
+        if (limit < 1 || limit > 100) throw new IllegalStateException("工具调用上限无效");
+        if (run.getToolCallCount() >= limit) {
+            finish(run, "failed", "TOOL_CALL_LIMIT", "工具调用次数已达到上限", Map.of());
+            return false;
+        }
+        run.setToolCallCount(Math.addExact(run.getToolCallCount(), 1));
+        append(run, "tool_started", Map.of("callId", callId, "toolName", toolName));
+        return true;
+    }
+
+    /** 保存工具进度，不发布工具正文；取消或超时后的迟到进度不会写入。 */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean toolCallFinished(Long id, String callId, String toolName, String errorCode, long elapsedMs) {
+        AgentRun run = live(id);
+        if (run == null) return false;
+        verifyAccess(run);
+        var progress = events.selectList(new QueryWrapper<RunEvent>().eq("run_id", id)
+                .in("event_type", "tool_started", "tool_completed", "tool_failed"));
+        boolean began = false;
+        for (var event : progress) {
+            var recorded = json.tree(event.getPayload());
+            if (!callId.equals(recorded.path("callId").asText())) continue;
+            if (!toolName.equals(recorded.path("toolName").asText())) throw new IllegalStateException("工具调用名称不匹配");
+            if (!"tool_started".equals(event.getEventType())) return false;
+            began = true;
+        }
+        if (!began) throw new IllegalStateException("工具调用尚未登记开始");
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("callId", callId);
+        payload.put("toolName", toolName);
+        payload.put("elapsedMs", Math.max(0, elapsedMs));
+        if (errorCode != null) payload.put("errorCode", errorCode);
+        append(run, errorCode == null ? "tool_completed" : "tool_failed", payload);
+        return true;
+    }
+
+    /** 已登记的调用不能再次执行；不更改 Run 状态，也不重复累计工具次数。 */
+    public static class DuplicateToolCall extends RuntimeException {
+        public DuplicateToolCall() { super("工具调用 ID 已登记"); }
     }
 
     /** 已发生的模型消耗独立提交，后续答案校验失败不回滚；同一次响应只能调用一次。 */

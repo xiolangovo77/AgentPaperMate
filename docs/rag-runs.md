@@ -51,6 +51,8 @@
 
 本批没有实现 Agent 循环。后续新增 `AgentExecutor` 时复用 Dispatcher 提供的上下文，`AgentHarness` 不再自行创建上下文或提交终态；仍需完成模型工具调用验证、工具权限与预算、循环停止条件、技能加载，以及多轮证据选择和最终证据快照策略。当前不会恢复重启前的 running 任务，也不会恢复其内存证据注册器，继续按既有截止时间回收。
 
+第二、三批的模型适配器、两个只读工具、统一工具执行层及开发验证入口见[工具调用验证说明](./tool-calling-validation.md)。该入口尚未接入 RunDispatcher，生产执行器仍只有 rag。
+
 ## 业务阶段与数据库升级
 
 `agent_run.execution_phase` 记录业务阶段；`status` 记录运行生命周期，`event_seq` 只用于事件排序和 SSE 补发。增加技能或工具进度事件不会改变业务阶段，也不会阻止原有流程继续执行。
@@ -175,18 +177,18 @@ data:{"runId":"123","eventId":"3","type":"retrieval_completed","timestamp":"2026
 
 ## 检索范围和引用
 
-检索入口为 `RagRetriever.retrieve(RetrievalRequest request, RetrievalContext context)`，不再接收 `AgentRun`。执行层负责读取持久化快照、构造后端上下文，检索器只处理本次查询和受限资料范围。
+检索入口为 `RagRetriever.retrieve(RetrievalRequest request, RetrievalContext context, LocalDateTime deadline)`，不接收 `AgentRun`。执行层负责读取持久化快照、构造后端上下文，并从 `AgentRunContext.getDeadline()` 单独传入 Run 的截止时间。
 
 - `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节；topK 为每路候选数量，构造时限制 1 至 100，执行时还必须不超过 `rag.retrieval-top-k`。该配置同时是固定 RAG 的默认值和 Agent 的上限；超限请求在调用外部服务前报错，不静默截断。融合后候选可能多于 topK。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
-- `RetrievalContext(userId, allowedScopes, deadline)`：仅由后端根据当前 Run 构建，不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
+- `RetrievalContext(userId, allowedScopes)`：只保存后端用户与检索范围，不持有 Run 的时间预算，也不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
 - Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，`RunStore` 在保存证据和发布答案前再次验权；普通会话资料调整不会替换启动时快照，删除或撤权则阻止继续访问或发布结果。
-- 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。聊天调用也从共享上下文取得截止时间；旧的 `call(AgentRun, operation)` 仍委托给这个入口。
+- 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。模型、工具和检索调用统一使用 `AgentRunContext.deadline`，该不可变字段从已领取的 Run 快照复制；旧的 `call(AgentRun, operation)` 仍委托给这个入口。
 
 固定 RAG 在 `FixedRagExecutor` 中使用 Dispatcher 传入的 context：
 
 ```java
 var request = new RetrievalRequest(context.getUserQuery(), null, properties.getRetrievalTopK());
-var candidates = retriever.retrieve(request, context.getRetrievalContext());
+var candidates = retriever.retrieve(request, context.getRetrievalContext(), context.getDeadline());
 var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
 ```
 

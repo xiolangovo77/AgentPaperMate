@@ -104,7 +104,7 @@ class RagHttpTest {
     }
 
     private RetrievalContext retrievalContext() {
-        return new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()), run.getDeadline());
+        return new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()));
     }
 
     @AfterEach
@@ -116,7 +116,8 @@ class RagHttpTest {
 
     @Test
     void nativeQueryEmbeddingTwoFilteredSearchesAndNativeChatRoundTrip() {
-        var retrieval = runContext.getEvidenceRegistry().registerRetrieval(retriever.retrieve(retrievalRequest(), retrievalContext()));
+        var retrieval = runContext.getEvidenceRegistry().registerRetrieval(retriever.retrieve(
+                retrievalRequest(), retrievalContext(), runContext.getDeadline()));
         var evidence = retrieval.evidence();
         assertEquals(List.of("chunk1"), retrieval.retrievedChunkIds());
         assertEquals(1, evidence.size());
@@ -144,9 +145,19 @@ class RagHttpTest {
     }
 
     @Test
+    void expiredRunDeadlinePreventsEmbeddingAndSearchRequests() {
+        run.setDeadline(runContext.getDeadline().minusMinutes(1));
+        var expiredContext = AgentRunContext.fromClaimedRun(run, json);
+        assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(
+                retrievalRequest(), expiredContext.getRetrievalContext(), expiredContext.getDeadline()));
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
     void partialSearchTimeoutNeverReturnsSuccessfulEvidence() {
         timedOut = true;
-        assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(retrievalRequest(), retrievalContext()));
+        assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(
+                retrievalRequest(), retrievalContext(), runContext.getDeadline()));
         assertEquals(1, requests.get("/paper_test/_search").size());
     }
 

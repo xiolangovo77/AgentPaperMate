@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.*;
 
 /** 自行发送 BM25 和带前置过滤的 kNN 请求，在 Java 中按 RRF 合并证据。 */
@@ -67,8 +68,11 @@ public class RagRetriever {
         this.papers = papers;
     }
 
-    public RetrievalCandidates retrieve(RetrievalRequest request, RetrievalContext context) {
-        if (request == null || context == null) throw new IllegalArgumentException("检索请求和上下文不能为空");
+    /** deadline 由后端 AgentRunContext 提供，与检索范围分开传递。 */
+    public RetrievalCandidates retrieve(RetrievalRequest request, RetrievalContext context, LocalDateTime deadline) {
+        if (request == null || context == null || deadline == null) {
+            throw new IllegalArgumentException("检索请求、范围上下文和截止时间不能为空");
+        }
         // 固定 RAG 与 Agent 共用配置上限，越界请求在访问外部服务前拒绝。
         if (request.topK() > properties.getRetrievalTopK()) {
             throw new IllegalArgumentException("每路检索候选数量不能超过配置上限：" + properties.getRetrievalTopK());
@@ -82,7 +86,7 @@ public class RagRetriever {
                 throw new IllegalStateException("任务向量配置已变化，请重新提交任务");
             }
         }
-        float[] vector = calls.call(context.deadline(), () -> {
+        float[] vector = calls.call(deadline, () -> {
             verifyAccess(context.userId(), scopes);
             var options = DashScopeEmbeddingOptions.builder().withModel(scopes.getFirst().embeddingModel())
                     .withTextType("query").build();
@@ -102,11 +106,11 @@ public class RagRetriever {
         Map<String, Object> semantic = Map.of("size", k, "_source", List.of("content", "metadata"), "knn", Map.of(
                 "field", "embedding", "query_vector", vector, "k", k, "num_candidates", Math.max(100, k * 5), "filter", filter));
         String path = searchPath(scopes);
-        JsonNode bm25 = calls.call(context.deadline(), () -> {
+        JsonNode bm25 = calls.call(deadline, () -> {
             verifyAccess(context.userId(), scopes);
             return search(path, lexical);
         });
-        JsonNode knn = calls.call(context.deadline(), () -> {
+        JsonNode knn = calls.call(deadline, () -> {
             verifyAccess(context.userId(), scopes);
             return search(path, semantic);
         });

@@ -5,6 +5,8 @@ import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import lombok.Getter;
 
+import java.time.LocalDateTime;
+
 /** 固定 RAG 和 Agent 共用的运行上下文，每个 Run 创建一次，所有工具共享其证据注册器。 */
 @Getter
 public final class AgentRunContext {
@@ -18,7 +20,9 @@ public final class AgentRunContext {
     private final String modelName;
     /** 创建 Run 时保存的模型参数和调用预算快照。 */
     private final String modelConfig;
-    /** 服务端构建的用户、论文范围和截止时间快照。 */
+    /** Run 开始执行时确定的总截止时间，由所有模型、检索和工具调用共用。 */
+    private final LocalDateTime deadline;
+    /** 服务端构建的用户和论文范围快照。 */
     private final RetrievalContext retrievalContext;
     /** 本次 Run 共享的证据编号与检索候选登记器。 */
     private final EvidenceRegistry evidenceRegistry;
@@ -26,14 +30,15 @@ public final class AgentRunContext {
     private AgentRunContext(AgentRun run, RetrievalContext retrievalContext) {
         if (run.getId() == null || run.getId() <= 0
                 || run.getSessionId() == null || run.getSessionId() <= 0
-                || run.getUserQuery() == null || run.getUserQuery().isBlank()) {
-            throw new IllegalArgumentException("运行上下文缺少有效 Run、会话或问题");
+                || run.getUserQuery() == null || run.getUserQuery().isBlank() || run.getDeadline() == null) {
+            throw new IllegalArgumentException("运行上下文缺少有效 Run、会话、问题或截止时间");
         }
         this.runId = run.getId();
         this.sessionId = run.getSessionId();
         this.userQuery = run.getUserQuery();
         this.modelName = run.getModelName();
         this.modelConfig = run.getModelConfig();
+        this.deadline = run.getDeadline();
         this.retrievalContext = retrievalContext;
         this.evidenceRegistry = new EvidenceRegistry(retrievalContext.allowedScopes());
     }
@@ -45,6 +50,6 @@ public final class AgentRunContext {
         }
         // 只复制实际执行所需的不可变信息，不保留可修改的持久化实体或过期计数。
         return new AgentRunContext(run, new RetrievalContext(run.getUserId(),
-                json.scopes(run.getPapersSnapshot()), run.getDeadline()));
+                json.scopes(run.getPapersSnapshot())));
     }
 }

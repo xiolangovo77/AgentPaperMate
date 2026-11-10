@@ -18,6 +18,10 @@ public class RagProperties {
     private int maxOutputTokens = 2048;
     /** 每个 Run 最多发起的聊天模型调用次数，包含失败请求和显式重试。 */
     private int maxModelCalls = 8;
+    /** 每个 Run 最多尝试执行的工具次数，拒绝重复 ID 不消耗次数。 */
+    private int maxToolCalls = 12;
+    /** 单工具最长等待秒数，同时受整个 Run 的截止时间约束。 */
+    private int toolTimeoutSeconds = 20;
     /** 单次外部请求最长等待秒数。 */
     private int requestTimeoutSeconds = 60;
     /** 开始执行后的总预算秒数。 */
@@ -46,6 +50,7 @@ public class RagProperties {
                 || maxEvidence < 1 || maxEvidence > retrievalTopK || evidenceTokenBudget < 128
                 || evidenceTokenBudget > 32000 || maxPapers < 1 || maxPapers > 100
                 || maxOutputTokens < 1 || maxOutputTokens > 16000 || maxModelCalls < 1 || maxModelCalls > 100
+                || maxToolCalls < 1 || maxToolCalls > 100 || toolTimeoutSeconds < 1 || toolTimeoutSeconds > 300
                 || maxSseConnections < 1 || maxSseConnections > 1000) {
             throw new IllegalArgumentException("rag 执行预算配置无效");
         }

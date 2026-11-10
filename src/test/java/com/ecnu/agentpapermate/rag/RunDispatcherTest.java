@@ -46,8 +46,16 @@ class RunDispatcherTest {
     }
 
     @Test
+    void missingRunDeadlineFailsBeforeExecutingRetrieval() {
+        run.setDeadline(null);
+        dispatcher.dispatch(run);
+        verifyNoInteractions(retriever, generator);
+        verify(store).fail(1L, "EXECUTION_FAILED", "检索或模型服务调用失败，请稍后重试", false);
+    }
+
+    @Test
     void retrievalFailureDoesNotEmitCompletionOrCallModel() {
-        when(retriever.retrieve(any(), any())).thenThrow(new IllegalStateException("secret must not be persisted"));
+        when(retriever.retrieve(any(), any(), any())).thenThrow(new IllegalStateException("secret must not be persisted"));
         dispatcher.dispatch(run);
         verify(store, never()).retrieved(anyLong(), any());
         verify(store).fail(1L, "EXECUTION_FAILED", "检索或模型服务调用失败，请稍后重试", false);
@@ -56,7 +64,7 @@ class RunDispatcherTest {
 
     @Test
     void cancellationAfterRetrievalPreventsModelCall() {
-        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.candidates());
+        when(retriever.retrieve(any(), any(), any())).thenReturn(RunStoreTest.candidates());
         when(store.retrieved(eq(1L), any())).thenReturn(false);
         dispatcher.dispatch(run);
         verifyNoInteractions(generator);
@@ -65,7 +73,7 @@ class RunDispatcherTest {
 
     @Test
     void emptyEvidenceReturnsExplicitInsufficiencyWithoutModelCall() {
-        when(retriever.retrieve(any(), any())).thenReturn(new RetrievalCandidates(List.of(), List.of()));
+        when(retriever.retrieve(any(), any(), any())).thenReturn(new RetrievalCandidates(List.of(), List.of()));
         dispatcher.dispatch(run);
         var answer = ArgumentCaptor.forClass(Answer.class);
         verify(store).complete(eq(1L), answer.capture());
@@ -76,7 +84,7 @@ class RunDispatcherTest {
 
     @Test
     void timeoutIsDifferentFromExecutionFailure() {
-        when(retriever.retrieve(any(), any())).thenThrow(new RagCalls.RequestTimeout());
+        when(retriever.retrieve(any(), any(), any())).thenThrow(new RagCalls.RequestTimeout());
         dispatcher.dispatch(run);
         verify(store).fail(1L, "REQUEST_TIMEOUT", "外部服务请求超时", true);
     }
@@ -84,7 +92,7 @@ class RunDispatcherTest {
     @Test
     void fullCandidatesAreSavedBeforeGeneratingWithOnlyFinalEvidence() {
         var retrieval = RunStoreTest.retrieval();
-        when(retriever.retrieve(any(), any())).thenReturn(RunStoreTest.candidates());
+        when(retriever.retrieve(any(), any(), any())).thenReturn(RunStoreTest.candidates());
         when(queries.previousQuestions(any())).thenReturn(List.of());
         when(generator.generate(any(), eq(retrieval.evidence()), eq(List.of()))).thenReturn(RunStoreTest.answer());
         dispatcher.dispatch(run);
@@ -94,7 +102,7 @@ class RunDispatcherTest {
         var context = ArgumentCaptor.forClass(AgentRunContext.class);
         order.verify(generator).generate(context.capture(), eq(retrieval.evidence()), eq(List.of()));
         order.verify(store).complete(1L, RunStoreTest.answer());
-        verify(retriever).retrieve(any(), same(context.getValue().getRetrievalContext()));
+        verify(retriever).retrieve(any(), same(context.getValue().getRetrievalContext()), eq(run.getDeadline()));
         verify(queries).previousQuestions(same(context.getValue()));
         assertEquals(retrieval.retrievedChunkIds(), context.getValue().getEvidenceRegistry().getRetrievedChunkIds());
     }

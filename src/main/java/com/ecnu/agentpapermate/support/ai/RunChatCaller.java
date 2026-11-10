@@ -25,7 +25,7 @@ public class RunChatCaller {
     }
 
     public ChatResponse call(AgentRunContext context, Prompt prompt) {
-        ChatResponse response = calls.call(context.getRetrievalContext().deadline(), () -> {
+        ChatResponse response = calls.call(context.getDeadline(), () -> {
             // 放在限时等待内，预算覆盖数据库检查；每次模型请求只登记一次调用尝试。
             if (Thread.currentThread().isInterrupted() || !store.modelCallStarted(context.getRunId())) {
                 throw new CancellationException("运行已结束或模型调用预算已耗尽");

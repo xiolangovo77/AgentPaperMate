@@ -107,6 +107,8 @@ rag:
   model: qwen3.7-plus
   max-output-tokens: 2048
   max-model-calls: 20
+  max-tool-calls: 20
+  tool-timeout-seconds: 20
   request-timeout-seconds: 60
   run-timeout-seconds: 180
   queue-timeout-seconds: 300

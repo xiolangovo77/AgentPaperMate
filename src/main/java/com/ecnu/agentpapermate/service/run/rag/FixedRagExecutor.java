@@ -38,7 +38,7 @@ public class FixedRagExecutor implements RunExecutor {
         Long runId = context.getRunId();
         if (!store.retrievalStarted(runId)) return Optional.empty();
         var request = new RetrievalRequest(context.getUserQuery(), null, properties.getRetrievalTopK());
-        var candidates = retriever.retrieve(request, context.getRetrievalContext());
+        var candidates = retriever.retrieve(request, context.getRetrievalContext(), context.getDeadline());
         var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
         if (!store.retrieved(runId, retrieval)) return Optional.empty();
 

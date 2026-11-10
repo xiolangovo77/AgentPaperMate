@@ -83,7 +83,7 @@ class RunStoreTest {
         when(sessions.assignActiveRun(10L, 40L)).thenReturn(1);
         when(sessions.releaseActiveRun(10L, 40L)).thenReturn(1);
         run.setId(40L); run.setSessionId(10L); run.setUserId(20L); run.setStatus("pending"); run.setEventSeq(0L);
-        run.setCreateTime(LocalDateTime.now(clock)); run.setStepCount(0);
+        run.setCreateTime(LocalDateTime.now(clock)); run.setStepCount(0); run.setToolCallCount(0);
         run.setPapersSnapshot(json.write(List.of(scope())));
         run.setEvidenceSnapshot(json.write(List.of(evidence())));
         when(runs.selectById(40L)).thenReturn(run);
@@ -104,11 +104,83 @@ class RunStoreTest {
         order.verify(transactions).commit(transaction);
         assertEquals("pending", runCapture.getValue().getStatus());
         assertEquals("qwen3.7-plus", runCapture.getValue().getModelName());
+        assertEquals(12, json.tree(runCapture.getValue().getModelConfig()).path("maxToolCalls").asInt());
+        assertEquals(20, json.tree(runCapture.getValue().getModelConfig()).path("toolTimeoutSeconds").asInt());
         assertEquals(2, runCapture.getValue().getScopeVersion());
         assertTrue(runCapture.getValue().getPapersSnapshot().contains("attempt"));
         assertEquals("user", message.getValue().getRole());
         assertEquals(40L, message.getValue().getRunId());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void toolBudgetUsesRunSnapshotAndDoesNotChangeModelCountOrPhase() {
+        store.start(40L);
+        run.setModelConfig("{\"maxToolCalls\":1}"); properties.setMaxToolCalls(10);
+        assertTrue(store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertFalse(store.toolCallStarted(40L, "tool-2", "get_paper_metadata"));
+        assertEquals(1, run.getToolCallCount());
+        assertEquals(0, run.getStepCount());
+        assertEquals("ready", run.getExecutionPhase());
+        assertEquals("failed", run.getStatus());
+        assertEquals("TOOL_CALL_LIMIT", run.getErrorCode());
+        verify(sessions).releaseActiveRun(10L, 40L);
+    }
+
+    @Test
+    void persistentToolIdCannotBeClaimedTwiceAndCompletionIsRecordedOnce() {
+        var saved = recordToolEvents();
+        store.start(40L);
+        assertTrue(store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertThrows(RunStore.DuplicateToolCall.class,
+                () -> store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertEquals(1, run.getToolCallCount());
+        assertTrue(store.toolCallFinished(40L, "tool-1", "get_paper_metadata", null, 3));
+        assertFalse(store.toolCallFinished(40L, "tool-1", "get_paper_metadata", null, 3));
+        assertThrows(RunStore.DuplicateToolCall.class,
+                () -> store.toolCallStarted(40L, "tool-1", "search_paper_chunks"));
+        assertEquals(List.of("run_started", "tool_started", "tool_completed"),
+                saved.stream().map(RunEvent::getEventType).toList());
+    }
+
+    @Test
+    void unknownCompletionAndMismatchedToolNamesAreRejected() {
+        recordToolEvents(); store.start(40L);
+        assertThrows(IllegalStateException.class,
+                () -> store.toolCallFinished(40L, "missing", "get_paper_metadata", null, 1));
+        assertTrue(store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertThrows(IllegalStateException.class,
+                () -> store.toolCallFinished(40L, "tool-1", "search_paper_chunks", null, 1));
+    }
+
+    @Test
+    void cancellationBlocksLateToolCompletionAndKeepsOriginalTerminalState() {
+        var saved = recordToolEvents(); store.start(40L);
+        assertTrue(store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        when(runs.selectOne(any())).thenReturn(run);
+        store.cancel(40L, 20L);
+        assertFalse(store.toolCallFinished(40L, "tool-1", "get_paper_metadata", null, 1));
+        assertFalse(store.executionAllowed(40L));
+        assertEquals("cancelled", run.getStatus());
+        assertEquals(List.of("run_started", "tool_started", "run_cancelled"),
+                saved.stream().map(RunEvent::getEventType).toList());
+    }
+
+    @Test
+    void expiredRunAndInvalidToolBudgetNeverAdmitAnExecution() {
+        store.start(40L); run.setModelConfig("{\"maxToolCalls\":\"1\"}");
+        assertThrows(IllegalStateException.class, () -> store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertEquals(0, run.getToolCallCount());
+        run.setDeadline(LocalDateTime.now(clock));
+        assertFalse(store.toolCallStarted(40L, "tool-1", "get_paper_metadata"));
+        assertEquals("timeout", run.getStatus());
+    }
+
+    private java.util.ArrayList<RunEvent> recordToolEvents() {
+        var saved = new java.util.ArrayList<RunEvent>();
+        when(events.insert(any(RunEvent.class))).thenAnswer(call -> { saved.add(call.getArgument(0)); return 1; });
+        when(events.selectList(any())).thenAnswer(call -> List.copyOf(saved));
+        return saved;
     }
 
     @Test

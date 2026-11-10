@@ -1,15 +1,14 @@
 package com.ecnu.agentpapermate.rag.model;
 
-import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 
-/** 仅由后端根据 Run 快照构建；不能将前端或模型参数直接绑定到此上下文。 */
-public record RetrievalContext(Long userId, List<PaperScope> allowedScopes, LocalDateTime deadline) {
+/** 仅保存后端构建的用户和资料范围；运行时间预算由 AgentRunContext 单独持有。 */
+public record RetrievalContext(Long userId, List<PaperScope> allowedScopes) {
     public RetrievalContext {
-        if (userId == null || userId <= 0 || deadline == null
+        if (userId == null || userId <= 0
                 || allowedScopes == null || allowedScopes.isEmpty()) {
-            throw new IllegalArgumentException("检索上下文缺少有效用户、资料范围或截止时间");
+            throw new IllegalArgumentException("检索上下文缺少有效用户或资料范围");
         }
         var ids = new HashSet<Long>();
         for (PaperScope scope : allowedScopes) {

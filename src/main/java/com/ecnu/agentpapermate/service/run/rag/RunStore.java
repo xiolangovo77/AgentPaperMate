@@ -92,7 +92,8 @@ public class RunStore {
                 .eq("request_key", request.getRequestKey()));
         if (existing != null) {
             ThrowUtils.throwIf(!existing.getUserQuery().equals(request.getQuestion())
-                            || !Objects.equals(existing.getRetryOfRunId(), request.getRetryOfRunId()),
+                            || !Objects.equals(existing.getRetryOfRunId(), request.getRetryOfRunId())
+                            || !Objects.equals(existing.getExecutorType(), executorType(request)),
                     ErrorCode.CONFLICT_ERROR, "同一幂等键不能用于不同请求");
             return existing.getId();
         }
@@ -110,12 +111,13 @@ public class RunStore {
         AgentRun run = new AgentRun();
         run.setSessionId(session.getId()); run.setUserId(userId); run.setRequestKey(request.getRequestKey());
         run.setUserQuery(request.getQuestion()); run.setRetryOfRunId(request.getRetryOfRunId());
-        run.setExecutorType("rag"); run.setStatus("pending"); run.setScopeVersion(session.getScopeVersion());
+        run.setExecutorType(executorType(request)); run.setStatus("pending"); run.setScopeVersion(session.getScopeVersion());
         run.setExecutionPhase("queued");
         run.setPapersSnapshot(json.write(scope)); run.setModelName(properties.getModel());
         run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2,
                 "maxModelCalls", properties.getMaxModelCalls(), "maxToolCalls", properties.getMaxToolCalls(),
-                "toolTimeoutSeconds", properties.getToolTimeoutSeconds())));
+                "toolTimeoutSeconds", properties.getToolTimeoutSeconds(),
+                "agentContextTokenBudget", properties.getAgentContextTokenBudget())));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);
         run.setStepCount(0); run.setToolCallCount(0); run.setIsDelete((byte) 0);
         changed(runs.insert(run));
@@ -173,7 +175,18 @@ public class RunStore {
         }
         retrievedChunkIds.addAll(retrieval.retrievedChunkIds());
         run.setRetrievalSnapshot(json.write(List.copyOf(retrievedChunkIds)));
-        run.setEvidenceSnapshot(json.write(retrieval.evidence()));
+        // Agent 保留历轮已保存的工具证据；固定 RAG 继续使用原来的本轮证据语义。
+        List<Evidence> evidence = retrieval.evidence();
+        if ("agent".equals(run.getExecutorType()) && run.getEvidenceSnapshot() != null) {
+            var merged = new LinkedHashMap<String, Evidence>();
+            for (var item : json.evidence(run.getEvidenceSnapshot())) merged.put(item.evidenceId(), item);
+            for (var item : evidence) {
+                var previous = merged.putIfAbsent(item.evidenceId(), item);
+                if (previous != null && !previous.equals(item)) throw new IllegalStateException("证据 ID 对应原文冲突");
+            }
+            evidence = List.copyOf(merged.values());
+        }
+        run.setEvidenceSnapshot(json.write(evidence));
         run.setExecutionPhase("evidence_ready");
         changed(runs.updateById(run));
         append(run, "retrieval_completed", Map.of("evidenceCount", retrieval.evidence().size(),
@@ -189,6 +202,32 @@ public class RunStore {
         // generating 允许后续受控修复重新检查证据。
         requirePhase(run, "evidence_ready", "generating");
         verifyAccess(run);
+        requireEvidence(run);
+        run.setExecutionPhase("generating");
+        changed(runs.updateById(run));
+        return true;
+    }
+
+    /**
+     * Agent 收到最终回答后选择实际送入模型的证据；仅允许已保存证据的完整对象子集。
+     * 没有调用检索工具时显式保存空数组，不伪造检索事件。完成和消息发布仍由 Dispatcher 协调。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean agentAnswerReady(Long id, List<Evidence> suppliedEvidence) {
+        AgentRun run = live(id);
+        if (run == null) return false;
+        if (!"agent".equals(run.getExecutorType())) throw new IllegalStateException("仅 Agent 可以选择多轮证据");
+        requirePhase(run, "ready", "evidence_ready", "generating");
+        verifyAccess(run);
+        List<Evidence> saved = run.getEvidenceSnapshot() == null ? List.of() : json.evidence(run.getEvidenceSnapshot());
+        var ids = new HashSet<String>();
+        for (var item : suppliedEvidence) {
+            if (item == null || !saved.contains(item) || !ids.add(item.evidenceId())) {
+                throw new IllegalStateException("最终证据未保存或存在冲突");
+            }
+        }
+        if (run.getRetrievalSnapshot() == null) run.setRetrievalSnapshot("[]");
+        run.setEvidenceSnapshot(json.write(suppliedEvidence));
         requireEvidence(run);
         run.setExecutionPhase("generating");
         changed(runs.updateById(run));
@@ -495,6 +534,13 @@ public class RunStore {
                 || !request.getRequestKey().matches("[A-Za-z0-9_-]{16,64}") || request.getQuestion() == null
                 || request.getQuestion().isBlank() || request.getQuestion().getBytes(StandardCharsets.UTF_8).length > 16000,
                 ErrorCode.PARAMS_ERROR, "请提供16至64位幂等键和不超过16000字节的非空问题");
+        ThrowUtils.throwIf(!Set.of("rag", "agent").contains(executorType(request)),
+                ErrorCode.PARAMS_ERROR, "executorType 仅允许 rag 或 agent");
+    }
+
+    /** 兼容旧请求；空字符串、大小写变体和未知类型均由服务端拒绝。 */
+    private String executorType(RunCreateRequest request) {
+        return request.getExecutorType() == null ? "rag" : request.getExecutorType();
     }
 
     private boolean expired(AgentRun run) {

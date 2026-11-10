@@ -2,6 +2,7 @@ package com.ecnu.agentpapermate.rag;
 
 import com.ecnu.agentpapermate.config.JsonConfig;
 import com.ecnu.agentpapermate.controller.AgentRunController;
+import com.ecnu.agentpapermate.entity.dto.run.RunCreateRequest;
 import com.ecnu.agentpapermate.entity.model.*;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.exception.ErrorCode;
@@ -31,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** 贯通 HTTP、登录身份、业务转换及真实 JSON 配置，数据库使用替身。 */
@@ -73,6 +75,21 @@ class RunEvaluationTest {
         var cite = new MessageCitation(); cite.setEvidenceId("E1"); cite.setPaperId(PAPER_ID);
         cite.setChunkId("c1"); cite.setPageStart(5); cite.setPageEnd(5);
         when(citations.selectList(any())).thenReturn(List.of(cite));
+    }
+
+    @Test
+    void createAgentUsesExistingAuthenticatedEndpointAndBindsExecutorType() throws Exception {
+        when(store.create(any(), eq(20L))).thenReturn(RUN_ID);
+        mvc.perform(post("/agentRun/add").contentType("application/json").content("""
+                {"sessionId":"10","requestKey":"agent-request-0001","question":"实验结果？",
+                 "executorType":"agent","userId":"99"}
+                """))
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data").value(Long.toString(RUN_ID)));
+        var captured = org.mockito.ArgumentCaptor.forClass(RunCreateRequest.class);
+        verify(store).create(captured.capture(), eq(20L));
+        assertEquals("agent", captured.getValue().getExecutorType());
+        assertEquals(10L, captured.getValue().getSessionId());
     }
 
     @Test

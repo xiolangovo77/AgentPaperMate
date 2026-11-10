@@ -1,8 +1,10 @@
 # 第二、三批：模型工具调用验证与执行层
 
-## 当前交付范围
+## 第二、三批交付范围
 
-第二批提供 `agent/model/ToolCallModelAdapter`、测试辅助类 `ToolCallProbe` 和两个只读论文工具。`ToolCallProbe` 位于 `src/test/java/com/ecnu/agentpapermate/agent/model`，由测试显式创建，不注册 Spring Bean，不进入生产构建。第三批将工具路由、执行与结果协议收敛到 `agent/tool/ToolRegistry`、`ToolExecutor` 和 `ToolResult`。生产固定 RAG 调度保持原链路，未注册 agent 执行器，也未增加对外 HTTP 接口；完整 Agent 循环在第四批接入。
+第四批已通过生产 `AgentExecutor / AgentHarness` 接入串行多轮循环，入口、证据与预算策略见[最小 Agent 循环](./agent-loop.md)。本文保留第二、三批的协议验证记录；Probe 始终只存在于测试目录，不是当前生产入口。
+
+第二批提供 `agent/model/ToolCallModelAdapter`、测试辅助类 `ToolCallProbe` 和两个只读论文工具。`ToolCallProbe` 位于 `src/test/java/com/ecnu/agentpapermate/agent/model`，由测试显式创建，不注册 Spring Bean，不进入生产构建。第三批将工具路由、执行与结果协议收敛到 `agent/tool/ToolRegistry`、`ToolExecutor` 和 `ToolResult`。第二、三批交付时未注册 agent 执行器；第四批已在保留固定 RAG 的基础上接入。
 
 `ToolCallProbe.verify(context)` 接受后端已领取 Run 的共享上下文，最多发起两次模型请求：
 
@@ -70,7 +72,7 @@ Probe 返回的是原始模型响应，不是已通过 AnswerValidator 的最终
 
 调用 ID 的去重依据为当前 Run 已提交的 tool_started 事件，因此不依赖单例内存集合。Run 行锁阻止同一 ID 被同时领取；同一 ID 换工具名也不能再次执行。完成事件必须匹配已登记的 ID 和工具名，重复完成不追加事件。此处不缓存或重放旧工具结果，不支持重启后恢复执行；未使用结果的调用也不会自动重试。当前不清理活动 Run 的事件；未来如增加事件清理，必须保留调用去重依据或迁移到独立调用表。
 
-初期工具由调用方串行执行，不允许同时修改同一上下文的 EvidenceRegistry；ToolExecutor 不承担并行工具调度。单工具超时后停止整个 Probe，丢弃迟到返回值，不带着未完成检索阶段继续循环。后续 AgentHarness 仍需处理循环停止、上下文与 Token 预算、最终证据选择、回答校验和通过 Dispatcher 收尾。
+工具由调用方串行执行，不允许同时修改同一上下文的 EvidenceRegistry；ToolExecutor 不承担并行工具调度。单工具超时后停止整个 Probe 或 AgentHarness，丢弃迟到返回值，不带着未完成检索阶段继续循环。第四批 AgentHarness 已接管循环停止、上下文预算、最终证据选择及回答校验，并通过 Dispatcher 收尾。
 
 ## 测试覆盖
 

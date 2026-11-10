@@ -58,7 +58,8 @@ public class RagAnswerGenerator {
         return parse(output, evidence);
     }
 
-    Answer parse(String output, List<Evidence> evidence) {
+    /** 固定 RAG 与 Agent 共用结构化答案解析和引用校验，不额外请求模型。 */
+    public Answer parse(String output, List<Evidence> evidence) {
         //1、仅接受规定的 JSON 字段结构，引用必须来自当前证据
         try {
             if (output == null || output.length() > 100000) throw new AnswerValidator.InvalidAnswer();

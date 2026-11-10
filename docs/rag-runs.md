@@ -32,7 +32,7 @@
 
 ## 统一执行入口（第二阶段第一批）
 
-生产执行链路为 `RunScheduler → RunDispatcher → RunExecutor.execute(context)`，当前唯一实现为 `FixedRagExecutor`。原 `RunProcessor` 已迁移并删除，不保留第二条执行路径；HTTP、SSE、引用与评测接口不变，无需数据库迁移。
+生产执行链路为 `RunScheduler → RunDispatcher → RunExecutor.execute(context)`，当前实现为 `FixedRagExecutor` 和第四批新增的 `AgentExecutor`。原 `RunProcessor` 已迁移并删除，不保留第二条执行路径；HTTP、SSE、引用与评测接口不变，本批无需数据库迁移。
 
 | 主体 | 职责 |
 | --- | --- |
@@ -47,11 +47,11 @@
 
 固定 RAG 继续执行一次检索；topK 使用 `rag.retrieval-top-k`，候选并集、证据编号、空证据回答、事件顺序及最终引用校验规则保持原样。`RunChatCaller` 仍是模型调用前计数和响应后用量登记的唯一入口，Dispatcher 与执行器不额外累计。
 
-目前创建接口仍固定写入 `executor_type=rag`。`agent`、未知值、空值均不会回退执行 RAG，而是通过 `UNSUPPORTED_EXECUTOR` 明确失败；若已有取消或超时终态，RunStore 保留原终态。执行器类型重复注册在应用初始化时失败。
+第四批创建接口增加可选 `executorType`：省略或 null 使用 `rag`，显式值仅允许 `rag`、`agent`，其他值在创建时拒绝。类型参与幂等核对。分发器对数据库中未知或空的类型仍以 `UNSUPPORTED_EXECUTOR` 失败，不静默回退。已有取消或超时终态保持不变；执行器类型重复注册在应用初始化时失败。
 
-本批没有实现 Agent 循环。后续新增 `AgentExecutor` 时复用 Dispatcher 提供的上下文，`AgentHarness` 不再自行创建上下文或提交终态；仍需完成模型工具调用验证、工具权限与预算、循环停止条件、技能加载，以及多轮证据选择和最终证据快照策略。当前不会恢复重启前的 running 任务，也不会恢复其内存证据注册器，继续按既有截止时间回收。
+第四批已接入最小 Agent 循环，`AgentExecutor / AgentHarness` 复用 Dispatcher 的上下文，不自行创建上下文或提交终态。多轮工具、证据选择和循环边界见[最小 Agent 循环](./agent-loop.md)。尚未接入 Skills。当前不会恢复重启前的 running 任务或其内存证据注册器，继续按既有截止时间回收。
 
-第二、三批的模型适配器、两个只读工具、统一工具执行层及开发验证入口见[工具调用验证说明](./tool-calling-validation.md)。该入口尚未接入 RunDispatcher，生产执行器仍只有 rag。
+第二、三批的模型适配器、两个只读工具和统一工具执行层见[工具调用验证说明](./tool-calling-validation.md)。ToolCallProbe 仍仅为测试辅助类，生产 Agent 由 AgentHarness 驱动。
 
 ## 业务阶段与数据库升级
 
@@ -64,6 +64,7 @@
 | `retrievalStarted` | `ready`、`evidence_ready`、`generating` | `retrieving` |
 | `retrieved` | `retrieving` | `evidence_ready` |
 | `answerGenerationStarted` | `evidence_ready`、`generating` | `generating` |
+| `agentAnswerReady` | Agent 专用：`ready`、`evidence_ready`、`generating` | 核对已保存证据并选择实际提供模型的集合，进入 `generating` |
 | `modelCallStarted` | 任意阶段，要求 `status=running` 且未超时 | 保留业务阶段，累计一次调用尝试 |
 | `complete` | `evidence_ready`、`generating` | 保留最后阶段，`status=completed` |
 
@@ -75,7 +76,7 @@
 
 历史回填按模型轮数、两份快照、检索开始事件类型和开始时间确定最后可确认的阶段，不读取事件序号，也不改变历史状态、事件或更新时间。历史事件已清理时无法精确还原的阶段按剩余记录回填。升级不会恢复旧 `running` 任务，仍由原有截止时间回收流程结束它们。
 
-本次阶段解耦保留固定 RAG 单次检索流程；Agent 多轮工具执行及证据合并另行接入。
+阶段解耦保留固定 RAG 单次检索流程；第四批 Agent 多轮工具执行及证据合并见最小 Agent 循环说明。
 
 ## 按模型调用累计用量
 
@@ -115,7 +116,7 @@
 
 `retryOfRunId` 可选，主动重新执行已结束任务时传旧任务 ID，并使用新 `requestKey`。前端也可以直接生成 UUID；后端签发的键不是身份凭证，所有接口都必须登录。
 
-同一会话、同一键、相同问题和重试关联返回原 `runId`，即使原任务已经结束，也不会再次执行。相同键提交不同内容、会话已有其他活动任务时，由 `GlobalExceptionHandler` 返回业务码 `40900`。业务异常沿用项目统一处理方式，HTTP 状态为 200，前端根据响应体的 `code` 判断结果。问题不超过 16000 个 UTF-8 字节，键为 16～64 位字母、数字、下划线或连字符。
+同一会话、同一键、相同问题、执行器类型和重试关联返回原 `runId`，即使原任务已经结束，也不会再次执行。相同键提交不同内容、会话已有其他活动任务时，由 `GlobalExceptionHandler` 返回业务码 `40900`。业务异常沿用项目统一处理方式，HTTP 状态为 200，前端根据响应体的 `code` 判断结果。问题不超过 16000 个 UTF-8 字节，键为 16～64 位字母、数字、下划线或连字符。
 
 ## 评测数据查询
 
@@ -208,7 +209,7 @@ var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
 
 `RunStore.retrieved()` 在行锁内把传入候选与数据库已有数组再次合并，防止只传本轮候选或较旧的累计快照时覆盖前面的记录。每轮按 `retrievalStarted → retrieve → registerRetrieval → retrieved` 执行，已保存的轮次在后续失败、取消或超时后仍保留；终态或截止时间之后到达的新结果不写入。`retrieval_completed.payload.candidateCount` 为累计不重复候选数，`evidenceCount` 为本轮证据数。
 
-当前固定 RAG 仍只检索一次，候选顺序与数量保持原单轮语义。后续 Agent 执行器可复用上述串行流程，最终模型输入选择另行接入；`evidence_snapshot` 保存本轮选择的证据，不自动保存注册器全集。章节和页面工具后续需要提供稳定来源定位后复用注册器。编号和内存候选集合不支持重启后恢复同一个 Run，不新增数据库字段或表。
+当前固定 RAG 仍只检索一次，候选顺序与数量保持原单轮语义，`evidence_snapshot` 保存本轮选择的证据。第四批 Agent 在检索阶段合并已保存证据，最终选择成功 Tool Result 中实际送入模型的证据并集，不直接采用注册器全集。章节和页面工具后续需要提供稳定来源定位后复用注册器。编号和内存候选集合不支持重启后恢复同一个 Run，不新增数据库字段或表。
 
 创建任务时锁定聊天室，保存论文 ID、物理 ES 索引、有效索引版本、入库尝试令牌及向量配置。选中论文必须具有可用且与当前 Embedding 模型兼容的索引；最多 50 篇。任务执行期间普通增删资料只影响后续任务；论文实际删除或撤权会在阶段边界及最终写入前阻止继续使用。
 

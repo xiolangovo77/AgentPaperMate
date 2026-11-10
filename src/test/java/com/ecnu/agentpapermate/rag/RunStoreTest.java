@@ -83,6 +83,7 @@ class RunStoreTest {
         when(sessions.assignActiveRun(10L, 40L)).thenReturn(1);
         when(sessions.releaseActiveRun(10L, 40L)).thenReturn(1);
         run.setId(40L); run.setSessionId(10L); run.setUserId(20L); run.setStatus("pending"); run.setEventSeq(0L);
+        run.setExecutorType("rag");
         run.setCreateTime(LocalDateTime.now(clock)); run.setStepCount(0); run.setToolCallCount(0);
         run.setPapersSnapshot(json.write(List.of(scope())));
         run.setEvidenceSnapshot(json.write(List.of(evidence())));
@@ -103,6 +104,7 @@ class RunStoreTest {
         order.verify(sessions).assignActiveRun(10L, 40L);
         order.verify(transactions).commit(transaction);
         assertEquals("pending", runCapture.getValue().getStatus());
+        assertEquals("rag", runCapture.getValue().getExecutorType());
         assertEquals("qwen3.7-plus", runCapture.getValue().getModelName());
         assertEquals(12, json.tree(runCapture.getValue().getModelConfig()).path("maxToolCalls").asInt());
         assertEquals(20, json.tree(runCapture.getValue().getModelConfig()).path("toolTimeoutSeconds").asInt());
@@ -111,6 +113,103 @@ class RunStoreTest {
         assertEquals("user", message.getValue().getRole());
         assertEquals(40L, message.getValue().getRunId());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    void agentTypeIsValidatedAndParticipatesInIdempotency() {
+        var request = request(); request.setExecutorType("agent");
+        assertEquals(40L, store.create(request, 20L));
+        var captured = ArgumentCaptor.forClass(AgentRun.class);
+        verify(runs).insert(captured.capture());
+        assertEquals("agent", captured.getValue().getExecutorType());
+        assertEquals(24000, json.tree(captured.getValue().getModelConfig()).path("agentContextTokenBudget").asInt());
+        when(runs.selectOne(any())).thenReturn(captured.getValue());
+        assertEquals(40L, store.create(request, 20L));
+        request.setExecutorType(null);
+        assertThrows(BusinessException.class, () -> store.create(request, 20L));
+        for (String invalid : List.of("", "AGENT", "custom", " agent")) {
+            request.setExecutorType(invalid);
+            assertThrows(BusinessException.class, () -> store.create(request, 20L));
+        }
+        verify(runs, times(1)).insert(any(AgentRun.class));
+    }
+
+    @Test
+    void agentEvidenceUnionCanCiteEarlierRoundAndCompleteWithConsistentSnapshots() {
+        run.setExecutorType("agent"); run.setEvidenceSnapshot(null);
+        store.start(40L);
+        store.retrievalStarted(40L); store.retrieved(40L, retrieval());
+        var later = new Evidence("E2", 30L, "Paper", 1, "paper_test", "later", 2, 2, "后续原文", "url");
+        store.retrievalStarted(40L);
+        store.retrieved(40L, new RetrievalResult(List.of("later", "candidate-only"), List.of(later)));
+        assertEquals(List.of(evidence(), later), json.evidence(run.getEvidenceSnapshot()));
+        assertTrue(json.retrievedChunkIds(run.getRetrievalSnapshot()).contains("candidate-only"));
+        assertTrue(store.agentAnswerReady(40L, List.of(evidence(), later)));
+        assertTrue(store.complete(40L, answer()));
+        assertEquals("completed", run.getStatus());
+        var citation = ArgumentCaptor.forClass(MessageCitation.class);
+        verify(citations).insert(citation.capture());
+        assertEquals(evidence().chunkId(), citation.getValue().getChunkId());
+        assertEquals(evidence().quotedText(), citation.getValue().getQuotedText());
+        // 使用同一完成后的快照及实际引用执行评测查询，候选、上下文、引用保持各自语义。
+        var published = new ChatMessage(); published.setId(50L); published.setContent(answer().content());
+        when(messages.selectOne(any())).thenReturn(published);
+        when(citations.selectList(any())).thenReturn(List.of(citation.getValue()));
+        when(runs.selectOne(any())).thenReturn(run);
+        var queries = new com.ecnu.agentpapermate.service.run.rag.RunQueries(
+                store, events, messages, citations, sessionService, json);
+        var evaluation = queries.evaluation(40L, 20L);
+        assertEquals(json.retrievedChunkIds(run.getRetrievalSnapshot()), evaluation.retrievedChunkIds());
+        assertEquals(List.of(evidence().chunkId(), "later"), evaluation.finalEvidenceChunkIds());
+        assertEquals(List.of("E1"), evaluation.citations().stream().map(item -> item.evidenceId()).toList());
+        assertEquals(answer().content(), evaluation.answer());
+        assertFalse(store.complete(40L, answer()));
+        verify(sessions).releaseActiveRun(10L, 40L);
+    }
+
+    @Test
+    void agentFinalSelectionRejectsUnsavedOrChangedEvidenceAndRetainsOnlySuppliedSubset() {
+        run.setExecutorType("agent"); store.start(40L);
+        var changed = new Evidence("E1", 30L, "Paper", 1, "paper_test", "forged", 1, 1, "伪造原文", "url");
+        assertThrows(IllegalStateException.class, () -> store.agentAnswerReady(40L, List.of(changed)));
+        assertThrows(IllegalStateException.class, () -> store.agentAnswerReady(40L, List.of(evidence(), evidence())));
+        assertTrue(store.agentAnswerReady(40L, List.of()));
+        assertEquals("[]", run.getRetrievalSnapshot());
+        assertEquals("[]", run.getEvidenceSnapshot());
+        assertTrue(store.complete(40L, new Answer("缺少证据，无法确认", List.of())));
+    }
+
+    @Test
+    void agentFinalSelectionCannotAdvanceCancelledOrExpiredRuns() {
+        run.setExecutorType("agent"); store.start(40L);
+        run.setStatus("cancelled");
+        assertFalse(store.agentAnswerReady(40L, List.of()));
+        assertFalse(store.complete(40L, new Answer("迟到", List.of())));
+        run.setStatus("running"); run.setDeadline(LocalDateTime.now(clock));
+        assertFalse(store.agentAnswerReady(40L, List.of()));
+        assertEquals("timeout", run.getStatus());
+        verify(messages, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
+    void agentEvidenceSelectionDoesNotBypassRagOrIncompleteRetrievalPhase() {
+        store.start(40L);
+        assertThrows(IllegalStateException.class, () -> store.agentAnswerReady(40L, List.of()));
+        run.setExecutorType("agent"); store.retrievalStarted(40L);
+        assertThrows(IllegalStateException.class, () -> store.agentAnswerReady(40L, List.of()));
+    }
+
+    @Test
+    void budgetFailureRemainsTerminalWhenDispatcherReportsInterruption() {
+        run.setExecutorType("agent"); run.setModelConfig("{\"maxModelCalls\":1}");
+        store.start(40L);
+        assertTrue(store.modelCallStarted(40L));
+        assertFalse(store.modelCallStarted(40L));
+        store.fail(40L, "EXECUTION_INTERRUPTED", "任务执行被中断", false);
+        assertEquals("failed", run.getStatus());
+        assertEquals("MODEL_CALL_LIMIT", run.getErrorCode());
+        assertFalse(store.agentAnswerReady(40L, List.of()));
+        verify(sessions).releaseActiveRun(10L, 40L);
     }
 
     @Test
@@ -123,6 +222,8 @@ class RunStoreTest {
         assertEquals(0, run.getStepCount());
         assertEquals("ready", run.getExecutionPhase());
         assertEquals("failed", run.getStatus());
+        assertEquals("TOOL_CALL_LIMIT", run.getErrorCode());
+        store.fail(40L, "EXECUTION_INTERRUPTED", "任务执行被中断", false);
         assertEquals("TOOL_CALL_LIMIT", run.getErrorCode());
         verify(sessions).releaseActiveRun(10L, 40L);
     }

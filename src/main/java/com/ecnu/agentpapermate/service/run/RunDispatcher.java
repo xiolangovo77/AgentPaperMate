@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.service.run;
 
 import com.ecnu.agentpapermate.agent.context.AgentRunContext;
+import com.ecnu.agentpapermate.agent.AgentHarness;
 import com.ecnu.agentpapermate.entity.model.AgentRun;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
@@ -51,6 +52,8 @@ public class RunDispatcher {
             var answer = executor.execute(context);
             // complete 在锁内再次检查终态、权限、截止时间和引用；迟到结果不能发布。
             if (answer.isPresent()) store.complete(context.getRunId(), answer.get());
+        } catch (AgentHarness.Rejected e) {
+            store.fail(run.getId(), e.code(), e.getMessage(), false);
         } catch (RagCalls.RequestTimeout e) {
             store.fail(run.getId(), "REQUEST_TIMEOUT", "外部服务请求超时", true);
         } catch (AnswerValidator.InvalidAnswer e) {

@@ -107,6 +107,8 @@ rag:
   model: qwen3.7-plus
   max-output-tokens: 2048
   max-model-calls: 20
+  # 每轮完整 Agent 上下文及输出预留的估算上限，创建 Run 时保存快照。
+  agent-context-token-budget: 24000
   max-tool-calls: 20
   tool-timeout-seconds: 20
   request-timeout-seconds: 60

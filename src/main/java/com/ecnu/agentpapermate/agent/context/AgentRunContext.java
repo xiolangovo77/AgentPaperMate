@@ -1,6 +1,8 @@
 package com.ecnu.agentpapermate.agent.context;
 
 import com.ecnu.agentpapermate.entity.model.AgentRun;
+import com.ecnu.agentpapermate.agent.AgentHarness;
+import com.ecnu.agentpapermate.agent.skill.SkillSnapshot;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.ecnu.agentpapermate.support.json.RagJson;
 import lombok.Getter;
@@ -26,8 +28,10 @@ public final class AgentRunContext {
     private final RetrievalContext retrievalContext;
     /** 本次 Run 共享的证据编号与检索候选登记器。 */
     private final EvidenceRegistry evidenceRegistry;
+    /** Agent 专用的不可变技能内容，固定 RAG 为 null；不从历史或工具结果构建。 */
+    private final SkillSnapshot skill;
 
-    private AgentRunContext(AgentRun run, RetrievalContext retrievalContext) {
+    private AgentRunContext(AgentRun run, RetrievalContext retrievalContext, SkillSnapshot skill) {
         if (run.getId() == null || run.getId() <= 0
                 || run.getSessionId() == null || run.getSessionId() <= 0
                 || run.getUserQuery() == null || run.getUserQuery().isBlank() || run.getDeadline() == null) {
@@ -41,6 +45,7 @@ public final class AgentRunContext {
         this.deadline = run.getDeadline();
         this.retrievalContext = retrievalContext;
         this.evidenceRegistry = new EvidenceRegistry(retrievalContext.allowedScopes());
+        this.skill = skill;
     }
 
     /** 仅供后端分发入口使用；必须传入 RunStore.start 已提交的快照，不接受请求或工具参数。 */
@@ -49,7 +54,17 @@ public final class AgentRunContext {
             throw new IllegalArgumentException("只能为刚领取的 Run 创建运行上下文");
         }
         // 只复制实际执行所需的不可变信息，不保留可修改的持久化实体或过期计数。
+        SkillSnapshot skill = null;
+        if ("agent".equals(run.getExecutorType())) {
+            try {
+                skill = json.skillSnapshot(run.getModelConfig());
+                if (!skill.id().equals(run.getSkillId()) || !skill.version().equals(run.getSkillVersion())
+                        || !skill.contentHash().equals(run.getSkillContentHash())) throw new IllegalArgumentException();
+            } catch (IllegalArgumentException e) {
+                throw new AgentHarness.Rejected("SKILL_SNAPSHOT_INVALID", "任务缺少有效技能快照，请创建新任务");
+            }
+        }
         return new AgentRunContext(run, new RetrievalContext(run.getUserId(),
-                json.scopes(run.getPapersSnapshot())));
+                json.scopes(run.getPapersSnapshot())), skill);
     }
 }

@@ -74,6 +74,22 @@ class ToolExecutorTest {
         verifyNoInteractions(papers, retriever);
     }
 
+    @Test
+    void agentSkillRestrictionCannotBeBypassedByPassingAllRegisteredTools() {
+        var qa = com.ecnu.agentpapermate.agent.skill.SkillTestSupport.router().select("问题");
+        var restricted = com.ecnu.agentpapermate.agent.skill.SkillTestSupport.replace(qa, "SKILL.md",
+                qa.files().get("SKILL.md").replace("\r\n", "\n").replace("  - search_paper_chunks\n", ""));
+        var run = new AgentRun(); run.setId(40L); run.setUserId(20L); run.setSessionId(10L);
+        run.setUserQuery("q"); run.setExecutorType("agent"); run.setStatus("running"); run.setExecutionPhase("ready");
+        run.setPapersSnapshot(json.write(List.of(RunStoreTest.scope())));
+        run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
+        com.ecnu.agentpapermate.agent.skill.SkillTestSupport.attach(run, json, restricted);
+        context = AgentRunContext.fromClaimedRun(run, json);
+        assertEquals("TOOL_NOT_ALLOWED", execute("search_paper_chunks", "{\"query\":\"q\"}", registry.names()).path("code").asText());
+        verify(store, never()).toolCallStarted(anyLong(), anyString(), anyString());
+        verifyNoInteractions(papers, retriever);
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"{}", "{\"paperId\":30}", "{\"paperId\":\"31\"}",
             "{\"paperId\":\"30\",\"userId\":\"999\"}", "[]", "null", "{} {}"})

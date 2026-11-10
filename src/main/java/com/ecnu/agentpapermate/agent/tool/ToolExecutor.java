@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.agent.tool;
 
 import com.ecnu.agentpapermate.agent.context.AgentRunContext;
+import com.ecnu.agentpapermate.agent.skill.SkillRegistry;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.exception.BusinessException;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
@@ -41,7 +42,10 @@ public class ToolExecutor {
         }
         requireActive(context);
         var registered = registry.find(call.name());
-        if (registered.isEmpty() || !allowedTools.contains(call.name())) {
+        // 即使上层误传更大的集合，Agent 快照和本批运行策略仍只能收缩权限。
+        if (registered.isEmpty() || !allowedTools.contains(call.name())
+                || context.getSkill() != null && (!context.getSkill().allowedTools().contains(call.name())
+                || !SkillRegistry.RUN_TOOLS.contains(call.name()))) {
             return response(call, ToolResult.rejected("TOOL_NOT_ALLOWED", "工具未注册或不在本次允许集合中"));
         }
         try {

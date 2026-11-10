@@ -109,7 +109,7 @@ public class AgentRun implements Serializable {
     private String modelName;
 
     /**
-     * 温度、输出限制等非敏感模型参数
+     * 温度、输出限制等非敏感模型参数；Agent 另存服总结 Skill露全文。
      */
     @TableField("model_config")
     private String modelConfig;

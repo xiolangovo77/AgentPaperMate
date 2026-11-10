@@ -250,3 +250,7 @@ mvn -o '-Dspring.profiles.active=test' test
 ```
 
 测试使用假凭据、本地 HTTP 替身和 Mapper 替身，覆盖真实 SDK 的 query 向量请求、原生 Chat 请求、两路 ES 过滤、RRF、SSE 重连、幂等、取消/完成顺序、截止时间、事务回滚及资料变更消息。真实 MySQL 专项测试按原项目环境变量条件运行；离线通过不代表已完成部署环境下 ES、MySQL 和真实模型的端到端联调。
+
+## 第五批补充
+
+`executorType=agent` 现在在创建事务中选择并保存基础 Skill 内容快照，领取时追加 `skill_selected` 事件。复用既有 Skill 列和 `model_config` JSON，无 DDL 或请求字段迁移。省略执行器继续固定 RAG。详见[基础 Skills](./agent-skills.md)，包括旧 Agent 任务缺少快照时的处理方式。

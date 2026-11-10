@@ -1,5 +1,7 @@
 # 第四批：最小 Agent 循环
 
+第五批已在此基础上接入 Skill，当前注册、路由、内容快照和总结边界见[基础 Skills](./agent-skills.md)。本文保留第四批交付记录。
+
 本批只新增最小串行 Agent，使用 `get_paper_metadata`、`search_paper_chunks` 两个只读工具。没有实现 Skill 注册、加载、路由或新工具；固定 RAG 仍为默认入口，不需要新增数据库字段或迁移。
 
 ## 修改文件与职责

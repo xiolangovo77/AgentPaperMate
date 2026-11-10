@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.service.run.rag;
 
+import com.ecnu.agentpapermate.agent.skill.SkillRouter;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
@@ -82,6 +83,8 @@ public class RunStore {
      * 上海时区时钟，用于记录任务开始、结束时间及判断是否超时。
      */
     private final Clock ragClock;
+    /** Agent 创建时选择并冻结技能；固定 RAG 不经过技能链路。 */
+    private final SkillRouter skills;
 
     @Transactional(rollbackFor = Exception.class)
     public Long create(RunCreateRequest request, Long userId) {
@@ -114,10 +117,17 @@ public class RunStore {
         run.setExecutorType(executorType(request)); run.setStatus("pending"); run.setScopeVersion(session.getScopeVersion());
         run.setExecutionPhase("queued");
         run.setPapersSnapshot(json.write(scope)); run.setModelName(properties.getModel());
-        run.setModelConfig(json.write(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2,
+        var modelConfig = new LinkedHashMap<String, Object>(Map.of("maxTokens", properties.getMaxOutputTokens(), "temperature", 0.2,
                 "maxModelCalls", properties.getMaxModelCalls(), "maxToolCalls", properties.getMaxToolCalls(),
                 "toolTimeoutSeconds", properties.getToolTimeoutSeconds(),
-                "agentContextTokenBudget", properties.getAgentContextTokenBudget())));
+                "agentContextTokenBudget", properties.getAgentContextTokenBudget()));
+        if ("agent".equals(run.getExecutorType())) {
+            var skill = skills.select(run.getUserQuery());
+            run.setSkillId(skill.id()); run.setSkillVersion(skill.version()); run.setSkillContentHash(skill.contentHash());
+            // 复用 JSON 配置列保存完整技能快照，不增加数据库字段，不接受客户端覆盖。
+            modelConfig.put("skillSnapshot", skill);
+        }
+        run.setModelConfig(json.write(modelConfig));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);
         run.setStepCount(0); run.setToolCallCount(0); run.setIsDelete((byte) 0);
         changed(runs.insert(run));
@@ -144,6 +154,11 @@ public class RunStore {
         run.setDeadline(now().plusSeconds(properties.getRunTimeoutSeconds()));
         changed(runs.updateById(run));
         append(run, "run_started", Map.of("status", "running"));
+        if ("agent".equals(run.getExecutorType()) && run.getSkillId() != null
+                && run.getSkillVersion() != null && run.getSkillContentHash() != null) {
+            append(run, "skill_selected", Map.of("skillId", run.getSkillId(),
+                    "version", run.getSkillVersion(), "contentHash", run.getSkillContentHash()));
+        }
         return run;
     }
 

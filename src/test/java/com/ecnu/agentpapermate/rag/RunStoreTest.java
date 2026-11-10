@@ -58,7 +58,7 @@ class RunStoreTest {
         var processing = new PaperProcessingProperties();
         processing.setEmbeddingModel("embedding"); processing.setEmbeddingVersion("v1"); processing.setEmbeddingDimension(3);
         var target = new RunStore(runs, sessions, sessionService, relations, papers, jobs, messages, citations,
-                events, json, properties, processing, clock);
+                events, json, properties, processing, clock, com.ecnu.agentpapermate.agent.skill.SkillTestSupport.router());
         when(transactions.getTransaction(any())).thenReturn(transaction);
         var proxy = new ProxyFactory(target);
         proxy.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
@@ -105,6 +105,8 @@ class RunStoreTest {
         order.verify(transactions).commit(transaction);
         assertEquals("pending", runCapture.getValue().getStatus());
         assertEquals("rag", runCapture.getValue().getExecutorType());
+        assertNull(runCapture.getValue().getSkillId());
+        assertFalse(json.tree(runCapture.getValue().getModelConfig()).has("skillSnapshot"));
         assertEquals("qwen3.7-plus", runCapture.getValue().getModelName());
         assertEquals(12, json.tree(runCapture.getValue().getModelConfig()).path("maxToolCalls").asInt());
         assertEquals(20, json.tree(runCapture.getValue().getModelConfig()).path("toolTimeoutSeconds").asInt());
@@ -122,6 +124,11 @@ class RunStoreTest {
         var captured = ArgumentCaptor.forClass(AgentRun.class);
         verify(runs).insert(captured.capture());
         assertEquals("agent", captured.getValue().getExecutorType());
+        var skill = json.skillSnapshot(captured.getValue().getModelConfig());
+        assertEquals("paper-qa", skill.id());
+        assertEquals(skill.id(), captured.getValue().getSkillId());
+        assertEquals(skill.version(), captured.getValue().getSkillVersion());
+        assertEquals(skill.contentHash(), captured.getValue().getSkillContentHash());
         assertEquals(24000, json.tree(captured.getValue().getModelConfig()).path("agentContextTokenBudget").asInt());
         when(runs.selectOne(any())).thenReturn(captured.getValue());
         assertEquals(40L, store.create(request, 20L));
@@ -132,6 +139,30 @@ class RunStoreTest {
             assertThrows(BusinessException.class, () -> store.create(request, 20L));
         }
         verify(runs, times(1)).insert(any(AgentRun.class));
+    }
+
+    @Test
+    void summarySelectionAndSnapshotArePersistedOnceAndStartedEventContainsOnlyMetadata() {
+        var request = request(); request.setExecutorType("agent"); request.setQuestion("请总结这篇论文");
+        store.create(request, 20L);
+        var captured = ArgumentCaptor.forClass(AgentRun.class);
+        verify(runs).insert(captured.capture());
+        var selected = captured.getValue();
+        var skill = json.skillSnapshot(selected.getModelConfig());
+        assertEquals("paper-summary", skill.id());
+        assertTrue(skill.files().containsKey("references/summary-template.md"));
+        selected.setCreateTime(LocalDateTime.now(clock));
+        when(runs.selectById(40L)).thenReturn(selected);
+        when(runs.selectForUpdate(40L)).thenReturn(selected);
+        store.start(40L);
+        assertNull(store.start(40L), "重复领取不能重发技能事件");
+        var recorded = ArgumentCaptor.forClass(RunEvent.class);
+        verify(events, times(2)).insert(recorded.capture());
+        assertEquals(List.of("run_started", "skill_selected"), recorded.getAllValues().stream().map(RunEvent::getEventType).toList());
+        var payload = json.tree(recorded.getAllValues().getLast().getPayload());
+        assertEquals(skill.contentHash(), payload.path("contentHash").asText());
+        assertEquals(3, payload.size());
+        assertEquals(skill, com.ecnu.agentpapermate.agent.context.AgentRunContext.fromClaimedRun(selected, json).getSkill());
     }
 
     @Test

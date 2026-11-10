@@ -1,5 +1,7 @@
 package com.ecnu.agentpapermate.support.json;
 
+import com.ecnu.agentpapermate.agent.skill.SkillLoader;
+import com.ecnu.agentpapermate.agent.skill.SkillSnapshot;
 import com.ecnu.agentpapermate.rag.model.Evidence;
 import com.ecnu.agentpapermate.rag.model.PaperScope;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -21,6 +23,17 @@ public class RagJson {
      * 应用统一的 JSON 映射器，沿用已配置的 ID 和时间序列化规则。
      */
     private final ObjectMapper mapper;
+
+    /** 只解析服务端保存的技能快照，重新计算引用闭包及哈希，拒绝损坏的内容。 */
+    public SkillSnapshot skillSnapshot(String config) {
+        try {
+            var node = tree(config).get("skillSnapshot");
+            if (node == null || !node.isObject()) throw new IllegalArgumentException("缺少技能快照");
+            return SkillLoader.verify(mapper.treeToValue(node, SkillSnapshot.class));
+        } catch (java.io.IOException | RuntimeException e) {
+            throw new IllegalArgumentException("任务技能快照无效", e);
+        }
+    }
 
     public String write(Object value) {
         try {

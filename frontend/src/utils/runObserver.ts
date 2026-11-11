@@ -3,7 +3,7 @@ export const terminal = (status: string) => ['completed', 'failed', 'cancelled',
 export const eventTypes = ['run_started', 'skill_selected', 'tool_started', 'tool_completed', 'tool_failed', 'retrieval_started', 'retrieval_completed', 'run_completed', 'run_failed', 'run_cancelled', 'run_timeout']
 export const stageLabels: Record<string, string> = {
   pending: '任务已提交，等待执行', running: '任务正在执行', run_started: '正在准备资料',
-  retrieval_started: '正在检索论文证据', retrieval_completed: '检索完成，正在分析证据',
+  retrieval_started: '正在获取论文证据', retrieval_completed: '已获取论文证据，正在分析',
   skill_selected: '已选择技能，正在分析问题', tool_started: '正在调用论文工具',
   tool_completed: '工具执行完成，正在继续分析', tool_failed: '本次工具调用失败，等待后续处理',
   completed: '回答已完成', failed: '任务失败', cancelled: '任务已取消', timeout: '任务超时',

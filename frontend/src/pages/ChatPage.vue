@@ -22,6 +22,8 @@ const { executorType, runEvents, runId, runHistory } = chat
 const sessions = ref<Session[]>([]), listPage = ref(1), listPages = ref(1), listBusy = ref(false), listError = ref(''), listQuery = ref('')
 const switcher = ref(false), showScope = ref(false), modal = ref<'create' | 'rename' | 'delete' | null>(null), modalValue = ref(''), modalError = ref(''), modalBusy = ref(false)
 const messagesElement = ref<HTMLElement>(), messageListElement = ref<HTMLElement>(), switcherElement = ref<HTMLElement>()
+const recycledPapers = computed(() => papers.value.map(item => paperInfo.value[item.paperId]).filter(item => item?.isRecycled === 1))
+function refreshPaperState() { if (session.value) void chat.checkReadiness() }
 const followingLatest = ref(true)
 // Render each run once beside its own question, even when only its answer is on this page.
 const timeline = computed(() => {
@@ -137,13 +139,19 @@ watch(selectedId, () => void openRoute(), { immediate: true })
 watch(listQuery, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadSessions(), 300) })
 watch(() => messages.value.at(-1)?.id, async () => { await nextTick(); if (followingLatest.value) scrollToLatest() })
 watch(modal, async value => { if (value) { await nextTick(); document.getElementById('session-name')?.focus() } })
-onMounted(() => { void loadSessions(); document.addEventListener('click', outside); document.addEventListener('keydown', escape) })
-onBeforeUnmount(() => { messageResizeObserver?.disconnect(); listEpoch++; clearTimeout(searchTimer); document.removeEventListener('click', outside); document.removeEventListener('keydown', escape) })
+onMounted(() => { window.addEventListener('focus', refreshPaperState); void loadSessions(); document.addEventListener('click', outside); document.addEventListener('keydown', escape) })
+onBeforeUnmount(() => { window.removeEventListener('focus', refreshPaperState); messageResizeObserver?.disconnect(); listEpoch++; clearTimeout(searchTimer); document.removeEventListener('click', outside); document.removeEventListener('keydown', escape) })
 onBeforeRouteLeave(to => to.meta.public ? true : chat.canLeave())
 onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) return chat.canLeave() })
 </script>
 <template>
   <div class="chat-page">
+    <div v-if="recycledPapers.length" class="notice" role="status">
+      <div>该会话关联的部分论文已移入回收站，当前会话仍可使用这些论文。建议新建会话并重新选择论文，或前往回收站恢复。
+        <details><summary>查看已回收论文（{{ recycledPapers.length }}）</summary><ul><li v-for="paper in recycledPapers" :key="paper!.id">{{ paperTitle(paper!) }}</li></ul></details>
+        <button class="text-link" @click="begin('create')">新建会话</button> · <RouterLink class="text-link" to="/library?view=recycle">前往回收站</RouterLink>
+      </div>
+    </div>
     <div class="page-heading">
       <div><div class="eyebrow">RESEARCH CONVERSATIONS</div><h1>聊天室</h1><p>让问题有依据，让讨论有积累。</p></div>
       <div class="toolbar">

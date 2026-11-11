@@ -35,11 +35,13 @@ CREATE TABLE paper (
     active_index_attempt VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL COMMENT '有效索引的执行尝试令牌，隔离旧执行者写入',
     create_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时间（上海时间）',
     update_time DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT '更新时间（上海时间）',
+    is_recycled TINYINT NOT NULL DEFAULT 0 COMMENT '回收站：0正常、1已回收',
     is_delete TINYINT NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常、1删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_paper_user_hash (user_id, file_hash),
     KEY idx_paper_user_list (user_id, is_delete, create_time, id),
     KEY idx_paper_user_topic (user_id, is_delete, topic, create_time, id),
+    CONSTRAINT ck_paper_is_recycled CHECK (is_recycled IN (0, 1)),
     CONSTRAINT ck_paper_is_delete CHECK (is_delete IN (0, 1))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='论文及原始文件信息';
 

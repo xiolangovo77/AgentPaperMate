@@ -1,5 +1,6 @@
 package com.ecnu.agentpapermate.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.ecnu.agentpapermate.entity.model.Paper;
 import com.ecnu.agentpapermate.mapper.PaperMapper;
 import com.ecnu.agentpapermate.service.PaperService;
@@ -74,12 +75,27 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     private final TransactionTemplate transactionTemplate;
 
     @Override
+    public boolean setRecycled(Long id, Byte isRecycled, Long userId) {
+        //1、校验目标状态，只允许回收或恢复
+        ThrowUtils.throwIf(isRecycled == null || (isRecycled != 0 && isRecycled != 1),
+                ErrorCode.PARAMS_ERROR, "回收状态只能为0或1");
+        //2、校验登录态、论文 ID 和归属，确保只能操作本人的有效论文
+        Paper paper = requireOwnedPaper(id, userId);
+        //3、更新回收状态，保留论文数据及已有会话关联，重复设置同一状态仍视为成功
+        paperMapper.update(null, new UpdateWrapper<Paper>()
+                .eq("id", paper.getId()).eq("user_id", userId).set("is_recycled", isRecycled));
+        return true;
+    }
+
+    @Override
     public Page<PaperSummaryVO> listPapers(PaperQueryRequest request, Long userId) {
         //1、校验登录态、分页边界及筛选条件，不接受客户端指定的排序字段
         ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
         ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
         ThrowUtils.throwIf(request.getPageNum() < 1 || request.getPageSize() < 1 || request.getPageSize() > 100,
                 ErrorCode.PARAMS_ERROR, "页码至少为1，每页数量为1至100");
+        ThrowUtils.throwIf(request.getIsRecycled() == null || (request.getIsRecycled() != 0 && request.getIsRecycled() != 1),
+                ErrorCode.PARAMS_ERROR, "回收状态只能为0或1");
         String title = keyword(request.getTitle());
         String authors = keyword(request.getAuthors());
         String topic = keyword(request.getTopic());
@@ -87,8 +103,8 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         ThrowUtils.throwIf(status != null && !Set.of("uploaded", "processing", "ready", "failed").contains(status),
                 ErrorCode.PARAMS_ERROR, "论文状态不合法");
 
-        //2、只查询本人未删除的论文，所有筛选条件以 AND 组合，固定排序避免翻页漂移
-        var query = new QueryWrapper<Paper>().eq("user_id", userId)
+        //2、按回收状态查询本人未删除的论文，筛选条件以 AND 组合，固定排序避免翻页漂移
+        var query = new QueryWrapper<Paper>().eq("user_id", userId).eq("is_recycled", request.getIsRecycled())
                 .like(title != null, "title", title).like(authors != null, "authors", authors)
                 .like(topic != null, "topic", topic).eq(status != null, "status", status)
                 .orderByDesc("create_time", "id");
@@ -183,6 +199,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
                 paper.setFileUrl(request.getFileUrl());
                 paper.setStatus("uploaded");
                 paper.setIsDelete((byte) 0);
+                paper.setIsRecycled((byte) 0);
                 requireInserted(paperMapper.insert(paper));
 
                 // 5、创建待执行任务，任一步失败都回滚
@@ -204,15 +221,24 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
      * 根据用户 ID 和文件哈希查找已有论文及其首次处理任务，不存在时返回 null。
      */
     private PaperAddVO findExisting(Long userId, String hash) {
+        //1、按用户和文件哈希查找已有论文，未找到时交由上传流程创建
         Paper paper = paperMapper.selectOne(new QueryWrapper<Paper>()
                 .eq("user_id", userId).eq("file_hash", hash));
         if (paper == null) {
             return null;
         }
+        //2、已回收的同内容论文需先恢复，禁止通过重复上传绕过回收状态
+        ThrowUtils.throwIf(Byte.valueOf((byte) 1).equals(paper.getIsRecycled()), ErrorCode.CONFLICT_ERROR,
+                "该论文已在回收站，请恢复后使用");
+        //3、读取已有论文的首次处理任务，检查论文与任务记录是否完整
         PaperProcessingJob job = jobMapper.selectOne(new QueryWrapper<PaperProcessingJob>()
                 .eq("paper_id", paper.getId()).eq("index_version", 1));
         ThrowUtils.throwIf(job == null, ErrorCode.OPERATION_ERROR, "论文已存在但处理任务缺失，请联系管理员");
-        return buildPaperAddVO(paper, job);
+
+        //4、返回已有论文和任务，并标记重复上传，供前端展示提示
+        PaperAddVO result = buildPaperAddVO(paper, job);
+        result.setAlreadyExists(true);
+        return result;
     }
 
     /**

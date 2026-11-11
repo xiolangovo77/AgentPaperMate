@@ -11,6 +11,11 @@ import java.time.LocalDateTime;
 @Setter
 public class PaperSummaryVO {
     /**
+     * 回收站状态：0正常、1已回收。
+     */
+    private Byte isRecycled;
+
+    /**
      * 论文标识。
      */
     private Long id;

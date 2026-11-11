@@ -17,7 +17,7 @@ async function fixtures(page: Page) {
     creates: [] as Record<string, unknown>[],
     failCreate: false, conflict: false, expire: false, runStatus: 'running',
     unhandled: [] as string[],
-    canAsk: true,
+    canAsk: true, recycled: 0,
     runEvents: [] as RunEvent[],
   }
   await page.route('**/api/**', async (route: Route) => {
@@ -28,8 +28,9 @@ async function fixtures(page: Page) {
     if (state.expire) return route.fulfill({ json: envelope(null, 40100, '未登录') })
     if (path === '/appUser/get') return ok({ id: '10', username: 'test_researcher', nickname: '测试研究者' })
     const paper = { id: paperId, title: '测试论文', originalFilename: 'paper.pdf', authors: 'Test Author', topic: 'RAG', status: 'ready', pageCount: 4, fileSize: '1024', createTime: '2026-11-08T12:00:00', updateTime: '2026-11-08T12:00:00' }
-    if (path === '/paper/list/page') return ok(paged(body.status && body.status !== 'ready' ? [] : [paper]))
-    if (path === '/paper/get') return ok({ ...paper, id: new URL(request.url()).searchParams.get('id'), canAsk: state.canAsk, jobId: null, abstractText: '测试用论文摘要', errorMessage: null })
+    if (path === '/paper/recycle') { state.recycled = body.isRecycled; return ok(true) }
+    if (path === '/paper/list/page') return ok(paged((body.isRecycled || 0) !== state.recycled || body.status && body.status !== 'ready' ? [] : [{ ...paper, isRecycled: state.recycled }]))
+    if (path === '/paper/get') return ok({ ...paper, isRecycled: state.recycled, id: new URL(request.url()).searchParams.get('id'), canAsk: state.canAsk, jobId: null, abstractText: '测试用论文摘要', errorMessage: null })
     if (path === '/paper/file') return route.fulfill({ contentType: 'application/pdf', body: pdfFixture() })
     if (path === '/paperProcessingJob/get') return ok({ id: '9223372036854775003', paperId, status: 'pending', currentStep: 'queued', totalChunks: null, indexedChunks: null, retryCount: 0, updateTime: '2026-11-08T12:00:00' })
     if (path === '/chatSession/list/page') return ok(paged([state.session]))
@@ -535,4 +536,33 @@ test('each chat turn restores its own skill and all tools and keeps them when th
   await expect(page.locator('[data-run-id="800"] li.running')).toHaveCount(1)
   expect(errors).toEqual([])
   expect(state.unhandled).toEqual([])
+})
+
+
+test('recycle and restore through library, preserve old chat and hide from picker', async ({ page }) => {
+  const state = await fixtures(page)
+  await page.goto('/library')
+  await page.getByRole('checkbox', { name: '选择 测试论文' }).check()
+  page.on('dialog', dialog => dialog.accept())
+  await page.getByRole('button', { name: '回收', exact: true }).click()
+  await expect(page.getByText('已选 0 篇 · 查看选择')).toBeVisible()
+  await expect(page.getByText('没有找到论文', { exact: true })).toBeVisible()
+  expect(state.recycled).toBe(1)
+  await page.getByRole('button', { name: '回收站', exact: true }).click()
+  await expect(page.getByRole('button', { name: '恢复', exact: true })).toBeVisible()
+  await expect(page.getByRole('checkbox')).toHaveCount(0)
+  await page.goto(`/chat/${sessionId}`)
+  await expect(page.getByText('该会话关联的部分论文已移入回收站', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: '调整资料', exact: true }).click()
+  await expect(page.getByText('没有找到论文', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '已选论文（1）', exact: true }).click()
+  await expect(page.getByText('已回收（当前会话仍可使用）', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await page.goto('/library?view=recycle')
+  await page.getByRole('button', { name: '恢复', exact: true }).click()
+  await expect(page.getByText('回收站为空', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '返回论文库', exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: '选择 测试论文' })).toBeVisible()
+  await page.goto(`/chat/${sessionId}`)
+  await expect(page.getByText('该会话关联的部分论文已移入回收站', { exact: false })).toHaveCount(0)
 })

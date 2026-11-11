@@ -125,7 +125,13 @@ public class Paper implements Serializable {
     private LocalDateTime updateTime;
 
     /**
-     * 逻辑删除：0正常、1删除
+     * 回收站状态：0正常、1已回收，不影响旧会话读取。
+     */
+    @TableField("is_recycled")
+    private Byte isRecycled;
+
+    /**
+     * 逻辑删除：0正常、1删除。
      */
     @TableLogic
     @TableField("is_delete")

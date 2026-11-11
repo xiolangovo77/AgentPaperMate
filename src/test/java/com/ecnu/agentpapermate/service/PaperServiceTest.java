@@ -228,6 +228,36 @@ class PaperServiceTest {
         assertEquals("https://example.com/file.pdf", parsed.getFileUrl());
     }
 
+    @Test
+    void recycledDuplicateExplainsHowToRestoreWithoutCreatingJob() {
+        Paper paper = existingPaper(); paper.setIsRecycled((byte) 1);
+        when(papers.selectOne(any())).thenReturn(paper);
+        var error = assertThrows(BusinessException.class, () -> service.addPaper(request, 42L));
+        assertTrue(error.getMessage().contains("回收站"));
+        verify(papers, never()).insert(any(Paper.class));
+        verify(jobs, never()).insert(any(PaperProcessingJob.class));
+    }
+
+    @Test
+    void recycleAndRestoreOnlyUpdateOwnedPaperFlag() {
+        when(papers.selectOne(any())).thenReturn(existingPaper());
+        assertTrue(service.setRecycled(100L, (byte) 1, 42L));
+        assertTrue(service.setRecycled(100L, (byte) 0, 42L));
+        var updates = ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper.class);
+        verify(papers, times(2)).update(isNull(), updates.capture());
+        assertTrue(updates.getAllValues().get(0).getSqlSet().contains("is_recycled"));
+        verifyNoInteractions(jobs, cos);
+    }
+
+    @Test
+    void recyclingRejectsInvalidStateAndForeignPaper() {
+        assertThrows(BusinessException.class, () -> service.setRecycled(100L, (byte) 2, 42L));
+        assertThrows(BusinessException.class, () -> service.setRecycled(100L, (byte) 1, null));
+        when(papers.selectOne(any())).thenReturn(null);
+        assertThrows(BusinessException.class, () -> service.setRecycled(100L, (byte) 1, 42L));
+        verify(papers, never()).update(any(), any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+    }
+
     private Paper existingPaper() {
         Paper paper = new Paper();
         paper.setId(100L);

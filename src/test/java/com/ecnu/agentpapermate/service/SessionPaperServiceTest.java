@@ -74,6 +74,24 @@ class SessionPaperServiceTest {
     }
 
     @Test
+    void recycledPaperCannotBeAddedThroughFullScope() {
+        Paper paper = new Paper(); paper.setIsRecycled((byte) 1);
+        when(papers.selectOne(any())).thenReturn(paper);
+        assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(200L, 201L), 1), 42L));
+        verify(relations, never()).insert(any(SessionPaper.class));
+        verify(relations, never()).updateMembership(anyLong(), anyByte());
+    }
+
+    @Test
+    void existingRecycledPaperCanRemainWhileAddingNormalPaper() {
+        Paper recycled = new Paper(); recycled.setIsRecycled((byte) 1);
+        when(papers.selectOne(any())).thenReturn(recycled).thenReturn(new Paper());
+        var result = service.updateScope(scopeRequest(List.of(200L, 201L), 1), 42L);
+        assertEquals(List.of(200L, 201L), result.getPaperIds());
+        verify(papers, times(2)).selectOne(any());
+    }
+
+    @Test
     void unchangedScopeAndDuplicateIdsDoNotAdvanceVersionOrWriteMessage() {
         var result = service.updateScope(scopeRequest(List.of(200L, 200L), 1), 42L);
         assertEquals(1, result.getScopeVersion()); assertEquals(List.of(200L), result.getPaperIds());
@@ -103,7 +121,9 @@ class SessionPaperServiceTest {
     void validatesWholeTargetScopeBeforeRemovingAnyCurrentPaper() {
         when(papers.selectOne(any())).thenReturn(new Paper()).thenReturn(null);
         assertThrows(BusinessException.class, () -> service.updateScope(scopeRequest(List.of(201L, 202L), 1), 42L));
-        verifyNoInteractions(relations, sessions, messages);
+        verify(relations, never()).updateMembership(anyLong(), anyByte());
+        verify(relations, never()).insert(any(SessionPaper.class));
+        verifyNoInteractions(sessions, messages);
         verify(transactions).rollback(txStatus);
     }
 
@@ -273,6 +293,18 @@ class SessionPaperServiceTest {
         verify(papers, times(2)).selectOne(query.capture());
         assertTrue(query.getValue().getSqlSegment().contains("user_id"));
         assertTrue(query.getValue().getParamNameValuePairs().containsValue(42L));
+    }
+
+    @Test
+    void recycledPaperCannotBeAddedOrRestoredByIndividualEndpoints() {
+        Paper paper = new Paper(); paper.setIsRecycled((byte) 1);
+        when(papers.selectOne(any())).thenReturn(paper);
+        assertThrows(BusinessException.class, () -> service.addSessionPaper(addRequest(), 42L));
+        when(relations.selectIncludingRemoved(300L)).thenReturn(relation((byte) 1));
+        when(relations.selectPairForUpdate(100L, 200L)).thenReturn(relation((byte) 1));
+        assertThrows(BusinessException.class, () -> service.updateSessionPaper(updateRequest((byte) 0), 42L));
+        verify(relations, never()).insert(any(SessionPaper.class));
+        verify(relations, never()).updateMembership(anyLong(), anyByte());
     }
 
     @Test

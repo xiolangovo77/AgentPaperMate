@@ -7,6 +7,10 @@ import lombok.Data;
  */
 @Data
 public class PaperAddVO {
+    /**
+     * 是否为已存在的论文：true表示返回已有记录，未重复创建论文及处理任务。
+     */
+    private boolean alreadyExists;
 
     /**
      * 论文 ID。

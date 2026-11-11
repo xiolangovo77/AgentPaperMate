@@ -18,6 +18,15 @@ import com.ecnu.agentpapermate.entity.vo.paper.PaperSummaryVO;
  * @since 2026-11-03
  */
 public interface PaperService extends IService<Paper> {
+    /**
+     * 回收或恢复当前用户的论文，保留已有会话关联及论文数据。
+     *
+     * @param id 论文 ID
+     * @param isRecycled 目标回收状态：0恢复、1回收
+     * @param userId 当前登录用户 ID，用于校验论文归属
+     * @return 操作成功返回 true，校验或操作失败时抛出异常
+     */
+    boolean setRecycled(Long id, Byte isRecycled, Long userId);
 
     /** 分页查询当前用户的有效论文。 */
     Page<PaperSummaryVO> listPapers(PaperQueryRequest request, Long userId);

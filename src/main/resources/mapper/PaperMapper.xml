@@ -19,6 +19,7 @@
         <result column="active_index_version" property="activeIndexVersion" />
         <result column="create_time" property="createTime" />
         <result column="update_time" property="updateTime" />
+        <result column="is_recycled" property="isRecycled" />
         <result column="is_delete" property="isDelete" />
         <result column="active_index_attempt" property="activeIndexAttempt" />
     </resultMap>

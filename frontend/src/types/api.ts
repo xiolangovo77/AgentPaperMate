@@ -4,15 +4,16 @@ export interface Page<T> { records: T[]; total: number | string; current: number
 export interface User { id: Id; username: string; nickname: string; avatarUrl?: string; createTime?: string }
 export interface Session { id: Id; name: string; inputDraft: string | null; scopeVersion: number; activeRunId: Id | null; lastMessageTime?: string; createTime: string; updateTime?: string }
 export interface SessionPaper { id: Id; sessionId: Id; paperId: Id; createTime?: string }
-export interface PaperReceipt { paperId: Id; jobId: Id; status: string }
+export interface PaperReceipt { alreadyExists?: boolean; paperId: Id; jobId: Id; status: string }
 export interface UploadedPaper extends PaperReceipt { filename: string; submittedAt: string }
 export interface PaperSummary {
+  isRecycled?: number
   id: Id; title: string | null; authors: string | null; topic: string | null; originalFilename: string
   pageCount: number | null; fileSize: string | null; status: 'uploaded' | 'processing' | 'ready' | 'failed'
   createTime: string; updateTime: string
 }
 export interface PaperDetail extends PaperSummary { abstractText: string | null; canAsk: boolean; jobId: Id | null; errorCode: string | null; errorMessage: string | null }
-export interface PaperQuery { pageNum: number; pageSize: number; title?: string; authors?: string; topic?: string; status?: string }
+export interface PaperQuery { isRecycled?: number; pageNum: number; pageSize: number; title?: string; authors?: string; topic?: string; status?: string }
 export interface PaperJob { id: Id; paperId: Id; status: 'pending' | 'running' | 'completed' | 'failed'; currentStep: string | null; totalChunks: number | null; indexedChunks: number | null; retryCount: number; errorCode: string | null; errorMessage: string | null; updateTime: string }
 export interface PaperScope { sessionId: Id; paperIds: Id[]; scopeVersion: number }
 export interface Message { id: Id; sessionId: Id; runId?: Id; role: string; messageType: string; content: string; extraData?: string; createTime: string }

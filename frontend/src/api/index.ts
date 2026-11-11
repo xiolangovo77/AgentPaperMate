@@ -16,6 +16,7 @@ export function uploadFile(kind: 'paper' | 'avatar', file: File, progress?: (val
     onUploadProgress: event => progress?.(event.total ? Math.round(event.loaded / event.total * 100) : null) })
 }
 export const paperApi = {
+  recycle: (id: Id, isRecycled: number) => post<boolean>('/paper/recycle', { id, isRecycled }),
   add: (fileUrl: string) => post<PaperReceipt>('/paper/add', { fileUrl }),
   list: (query: PaperQuery) => post<Page<PaperSummary>>('/paper/list/page', query),
   get: (id: Id) => get<PaperDetail>('/paper/get', { id }),

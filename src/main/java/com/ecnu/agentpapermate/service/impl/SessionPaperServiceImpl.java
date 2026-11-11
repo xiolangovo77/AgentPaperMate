@@ -81,14 +81,14 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
         request.getPaperIds().forEach(this::validateId);
         List<Long> after = new ArrayList<>(new TreeSet<>(request.getPaperIds()));
 
-        //2、先锁定本人会话再检查版本，和单篇添加、移除及问答快照使用相同的锁顺序
+        //2、锁定本人会话并检查版本，读取原范围以区分保留关联和新增关联，再校验目标论文
         ChatSession session = chatSessionService.lockSession(request.getSessionId(), userId);
         ThrowUtils.throwIf(!Objects.equals(request.getScopeVersion(), session.getScopeVersion()),
                 ErrorCode.CONFLICT_ERROR, "论文范围已变化，请刷新范围和版本后重试");
-        after.forEach(id -> requireOwnedPaper(id, userId));
         List<SessionPaper> current = sessionPaperMapper.selectList(new QueryWrapper<SessionPaper>()
                 .eq("session_id", session.getId()).orderByAsc("paper_id"));
         List<Long> before = current.stream().map(SessionPaper::getPaperId).sorted().toList();
+        after.forEach(id -> requireOwnedPaper(id, userId, before.contains(id)));
         int version = session.getScopeVersion();
 
         //3、只在集合实际变化时移出、恢复或新增关联，失败时整体回滚
@@ -262,10 +262,19 @@ public class SessionPaperServiceImpl extends ServiceImpl<SessionPaperMapper, Ses
     }
 
     private void requireOwnedPaper(Long paperId, Long userId) {
-        //1、论文必须存在、未删除且属于当前用户
+        //1、新增或恢复关联时，按禁止选择已回收论文的规则校验
+        requireOwnedPaper(paperId, userId, false);
+    }
+
+    private void requireOwnedPaper(Long paperId, Long userId, boolean alreadyAssociated) {
+        //1、锁定论文并校验归属，使新增关联与回收操作串行执行，逻辑删除由框架过滤
         Paper paper = paperMapper.selectOne(new QueryWrapper<Paper>()
-                .eq("id", paperId).eq("user_id", userId));
+                .eq("id", paperId).eq("user_id", userId).last("FOR UPDATE"));
         ThrowUtils.throwIf(paper == null, ErrorCode.NOT_FOUND_ERROR, "论文不存在或无权访问");
+
+        //2、已有会话关联允许保留回收论文，新增或恢复关联必须先恢复论文
+        ThrowUtils.throwIf(!alreadyAssociated && Byte.valueOf((byte) 1).equals(paper.getIsRecycled()), ErrorCode.CONFLICT_ERROR,
+                "该论文已回收，请恢复后再加入会话");
     }
 
     private void validateId(Long id) {

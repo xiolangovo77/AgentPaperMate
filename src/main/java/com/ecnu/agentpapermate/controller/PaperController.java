@@ -51,6 +51,16 @@ public class PaperController {
      */
     private final PaperFileService paperFileService;
 
+    @PostMapping("/recycle")
+    public BaseResponse<Boolean> recycle(@RequestBody com.ecnu.agentpapermate.entity.dto.paper.PaperRecycleRequest body,
+                                        HttpServletRequest request) {
+        //1、从登录态获取当前用户，避免客户端指定论文所有者
+        Long userId = appUserService.getLoginUser(request).getId();
+        //2、调用业务服务回收或恢复论文，统一包装操作结果
+        return ResultUtils.success(paperService.setRecycled(body.getId(), body.getIsRecycled(),
+                userId));
+    }
+
     @PostMapping("/list/page")
     public BaseResponse<Page<PaperSummaryVO>> listPage(@RequestBody PaperQueryRequest body, HttpServletRequest request) {
         //1、从登录态读取用户身份，分页查询本人论文

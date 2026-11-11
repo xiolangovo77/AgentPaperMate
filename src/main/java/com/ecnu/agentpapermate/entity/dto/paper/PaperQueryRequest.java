@@ -11,6 +11,11 @@ import lombok.Setter;
 @Setter
 public class PaperQueryRequest extends PageRequest {
     /**
+     * 回收状态筛选：0正常、1已回收，默认查询正常论文。
+     */
+    private Byte isRecycled = 0;
+
+    /**
      * 标题关键词，可选。
      */
     private String title;

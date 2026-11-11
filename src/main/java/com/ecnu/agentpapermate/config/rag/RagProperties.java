@@ -25,9 +25,9 @@ public class RagProperties {
     /** 单工具最长等待秒数，同时受整个 Run 的截止时间约束。 */
     private int toolTimeoutSeconds = 20;
     /** 单次外部请求最长等待秒数。 */
-    private int requestTimeoutSeconds = 60;
+    private int requestTimeoutSeconds = 120;
     /** 开始执行后的总预算秒数。 */
-    private int runTimeoutSeconds = 180;
+    private int runTimeoutSeconds = 300;
     /** 排队任务最长等待秒数。 */
     private int queueTimeoutSeconds = 300;
     /** 本实例同时执行的任务数量。 */

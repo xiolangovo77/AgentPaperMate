@@ -17,7 +17,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 
-/** 两个论文只读工具的定义与实现，统一由 ToolRegistry 注册、ToolExecutor 执行。 */
+/** 论文只读工具的定义与实现，统一由 ToolRegistry 注册、ToolExecutor 执行。 */
 @Component
 @RequiredArgsConstructor
 public class PaperTools {
@@ -48,14 +48,91 @@ public class PaperTools {
                                     "items":{"type":"string","pattern":"^[1-9][0-9]*$"}},
                                   "topK":{"type":"integer","minimum":1,"maximum":%d}},
                                  "required":["query"],"additionalProperties":false}
-                                """.formatted(properties.getRetrievalTopK())).build());
+                                """.formatted(properties.getRetrievalTopK())).build(),
+                readingDefinition("list_paper_sections", "分批查看论文索引中的章节目录；目录不能作为原文引用。使用 nextAfterChunkIndex 继续扫描，合并重复 sectionId。", "sections"),
+                readingDefinition("read_paper_section", "按目录返回的 sectionId 顺序读取章节分块；仅 evidence 可引用，需检查 hasMore 和 omittedChunkIds。", "section"),
+                readingDefinition("read_paper_page", "读取覆盖指定页码的分块，可能包含跨页文字；仅 evidence 可引用，支持分页。", "page"),
+                readingDefinition("read_neighbor_chunks", "读取已提供证据片段前后各最多三个分块，包含目标片段；使用原始 chunkId，不是 E1 等引用编号。", "neighbors"));
     }
 
     /** 定义和处理函数一起注册，不再通过字符串 switch 分派。 */
     public List<ToolRegistry.RegisteredTool> registeredTools() {
         var definitions = definitions();
         return List.of(new ToolRegistry.RegisteredTool(definitions.get(0), this::metadata),
-                new ToolRegistry.RegisteredTool(definitions.get(1), this::search));
+                new ToolRegistry.RegisteredTool(definitions.get(1), this::search),
+                new ToolRegistry.RegisteredTool(definitions.get(2), (c, a) -> browse(c, a, "sections")),
+                new ToolRegistry.RegisteredTool(definitions.get(3), (c, a) -> browse(c, a, "section")),
+                new ToolRegistry.RegisteredTool(definitions.get(4), (c, a) -> browse(c, a, "page")),
+                new ToolRegistry.RegisteredTool(definitions.get(5), (c, a) -> browse(c, a, "neighbors")));
+    }
+
+    private ToolDefinition readingDefinition(String name, String description, String mode) {
+        String extra = switch (mode) {
+            case "section" -> ",\"sectionId\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":128}";
+            case "page" -> ",\"page\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":100000}";
+            case "neighbors" -> ",\"chunkId\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":128},\"before\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":3},\"after\":{\"type\":\"integer\",\"minimum\":0,\"maximum\":3}";
+            default -> "";
+        };
+        String required = switch (mode) {
+            case "section" -> ",\"sectionId\"";
+            case "page" -> ",\"page\"";
+            case "neighbors" -> ",\"chunkId\"";
+            default -> "";
+        };
+        String limit = "sections".equals(mode) ? "" : ",\"limit\":{\"type\":\"integer\",\"minimum\":1,\"maximum\":20}";
+        return ToolDefinition.builder().name(name).description(description).inputSchema("""
+                {"type":"object","properties":{"paperId":{"type":"string","pattern":"^[1-9][0-9]*$"},
+                "afterChunkIndex":{"type":"integer","minimum":-1,"maximum":2147483647}%s%s},
+                "required":["paperId"%s],"additionalProperties":false}
+                """.formatted(extra, limit, required)).build();
+    }
+
+    private ToolResult browse(AgentRunContext context, JsonNode args, String mode) {
+        var allowed = new java.util.HashSet<>(Set.of("paperId", "afterChunkIndex"));
+        if (!"sections".equals(mode)) allowed.add("limit");
+        switch (mode) {
+            case "section" -> allowed.add("sectionId");
+            case "page" -> allowed.add("page");
+            case "neighbors" -> allowed.addAll(Set.of("chunkId", "before", "after"));
+        }
+        fields(args, allowed);
+        Long id = paperId(args.path("paperId"));
+        String section = "section".equals(mode) ? identifier(args, "sectionId") : "";
+        String chunk = "neighbors".equals(mode) ? identifier(args, "chunkId") : "";
+        int page = "page".equals(mode) ? integer(args, "page", 0, 1, 100000) : 0;
+        int cursor = integer(args, "afterChunkIndex", -1, -1, Integer.MAX_VALUE);
+        int limit = integer(args, "limit", Math.min(properties.getMaxEvidence(), 20), 1, 20);
+        int before = integer(args, "before", 1, 0, 3);
+        int after = integer(args, "after", 1, 0, 3);
+        if ("neighbors".equals(mode) && context.getEvidenceRegistry().snapshot().stream()
+                .noneMatch(e -> e.paperId().equals(id) && e.chunkId().equals(chunk)))
+            throw new IllegalArgumentException("相邻读取的目标必须是本次已提供的证据片段");
+        requireActive(context);
+        if (!"sections".equals(mode) && !store.retrievalStarted(context.getRunId()))
+            throw new CancellationException("Run 已停止");
+        var read = retriever.browse(context.getRetrievalContext(), context.getDeadline(), id, mode, section, page,
+                chunk, cursor, limit, before, after);
+        requireActive(context);
+        if ("sections".equals(mode)) return ToolResult.success(read.data(), List.of());
+        var result = context.getEvidenceRegistry().registerRetrieval(read.candidates());
+        if (!store.retrieved(context.getRunId(), result)) throw new CancellationException("Run 已停止");
+        return ToolResult.success(read.data(), result.evidence());
+    }
+
+    private String identifier(JsonNode args, String field) {
+        var value = args.path(field);
+        if (!value.isTextual() || value.asText().isBlank() || value.asText().length() > 128)
+            throw new IllegalArgumentException(field + " 必须是非空且有界的标识符");
+        return value.asText();
+    }
+
+    private int integer(JsonNode args, String field, int fallback, int minimum, int maximum) {
+        var value = args.get(field);
+        if (value != null && (!value.isIntegralNumber() || !value.canConvertToInt()))
+            throw new IllegalArgumentException(field + " 必须为整数");
+        int result = value == null ? fallback : value.intValue();
+        if (result < minimum || result > maximum) throw new IllegalArgumentException(field + " 超出范围");
+        return result;
     }
 
     private ToolResult metadata(AgentRunContext context, JsonNode args) {

@@ -111,8 +111,8 @@ rag:
   agent-context-token-budget: 240000
   max-tool-calls: 20
   tool-timeout-seconds: 20
-  request-timeout-seconds: 60
-  run-timeout-seconds: 180
+  request-timeout-seconds: 120
+  run-timeout-seconds: 300
   queue-timeout-seconds: 300
   poll-interval-ms: 1000
   max-concurrent-runs: 4

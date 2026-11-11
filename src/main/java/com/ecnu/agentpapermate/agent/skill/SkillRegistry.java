@@ -9,7 +9,8 @@ import java.util.*;
 @Component
 public class SkillRegistry {
     /** 本批运行策略的工具上限；未来注册新工具不会自动扩大权限。 */
-    public static final Set<String> RUN_TOOLS = Set.of("get_paper_metadata", "search_paper_chunks");
+    public static final Set<String> RUN_TOOLS = Set.of("get_paper_metadata", "search_paper_chunks",
+            "list_paper_sections", "read_paper_section", "read_paper_page", "read_neighbor_chunks");
     /** 注册阶段只保留元数据，选中后才读取参考内容。 */
     private final Map<String, SkillLoader.Metadata> registered;
     /** 选定技能后才读取正文及参考文件的受控加载器。 */

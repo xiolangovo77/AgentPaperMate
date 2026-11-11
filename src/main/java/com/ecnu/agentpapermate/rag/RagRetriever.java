@@ -136,6 +136,10 @@ public class RagRetriever {
     }
 
     Object filter(Long userId, List<PaperScope> scopes) {
+        return filter(userId, scopes, true);
+    }
+
+    private Object filter(Long userId, List<PaperScope> scopes, boolean evidenceOnly) {
         List<Object> allowed = new ArrayList<>();
         for (PaperScope scope : scopes) {
             allowed.add(Map.of("bool", Map.of("filter", List.of(
@@ -143,10 +147,114 @@ public class RagRetriever {
                     term("metadata.indexVersion", scope.indexVersion()), term("metadata.attemptToken", scope.attemptToken()),
                     term("metadata.embeddingModel", scope.embeddingModel()), term("metadata.embeddingVersion", scope.embeddingVersion())))));
         }
-        return Map.of("bool", Map.of("filter", List.of(term("metadata.ownerId", userId.toString()),
-                term("metadata.pageKnown", true), term("metadata.lowConfidence", false),
-                Map.of("bool", Map.of("should", allowed, "minimum_should_match", 1)))));
+        var filters = new ArrayList<Object>();
+        filters.add(term("metadata.ownerId", userId.toString()));
+        filters.add(Map.of("bool", Map.of("should", allowed, "minimum_should_match", 1)));
+        if (evidenceOnly) {
+            filters.add(term("metadata.pageKnown", true));
+            filters.add(term("metadata.lowConfidence", false));
+        }
+        return Map.of("bool", Map.of("filter", filters));
     }
+
+    /** 定位读取不调用 embedding；所有查询仍绑定运行时的归属、索引和尝试令牌。 */
+    public BrowseResult browse(RetrievalContext context, LocalDateTime deadline, Long paperId,
+                               String mode, String sectionId, int page, String chunkId,
+                               int afterChunkIndex, int limit, int before, int after) {
+        var scope = context.allowedScopes().stream().filter(s -> s.paperId().equals(paperId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("论文超出本次 Run 范围"));
+        if (!Set.of("sections", "section", "page", "neighbors").contains(mode)
+                || afterChunkIndex < -1 || limit < 1 || limit > 20 || before < 0 || before > 3 || after < 0 || after > 3)
+            throw new IllegalArgumentException("读取参数越界");
+        return calls.call(deadline, () -> {
+            verifyAccess(context.userId(), List.of(scope));
+            var constraints = new ArrayList<Object>();
+            // 先扫描所有结构分块；不可引用的正文由 fuse 的来源/页码/置信度规则排除。
+            constraints.add(filter(context.userId(), List.of(scope), false));
+            if ("section".equals(mode)) constraints.add(term("metadata.sectionId", sectionId));
+            if ("page".equals(mode)) {
+                constraints.add(term("metadata.pageKnown", true));
+                constraints.add(Map.of("range", Map.of("metadata.pageStart", Map.of("lte", page))));
+                constraints.add(Map.of("range", Map.of("metadata.pageEnd", Map.of("gte", page))));
+            }
+            if ("neighbors".equals(mode)) {
+                var anchorFilters = new ArrayList<>(constraints);
+                anchorFilters.add(term("metadata.chunkId", chunkId));
+                var anchor = search(searchPath(List.of(scope)), Map.of("size", 2, "_source", List.of("metadata"),
+                        "query", Map.of("bool", Map.of("filter", anchorFilters)))).at("/hits/hits");
+                if (anchor.size() != 1) throw new IllegalArgumentException("目标片段不存在或不唯一");
+                validateBrowseHit(context.userId(), scope, anchor.get(0));
+                int index = anchor.get(0).at("/_source/metadata/chunkIndex").asInt();
+                constraints.add(Map.of("range", Map.of("metadata.chunkIndex",
+                        Map.of("gte", Math.max(0, index - before), "lte", (long) index + after))));
+            }
+            constraints.add(Map.of("range", Map.of("metadata.chunkIndex", Map.of("gt", afterChunkIndex))));
+            int size = "sections".equals(mode) ? 100 : limit;
+            var body = new LinkedHashMap<String, Object>();
+            body.put("size", size + 1);
+            body.put("_source", "sections".equals(mode) ? List.of("metadata") : List.of("metadata", "content"));
+            body.put("query", Map.of("bool", Map.of("filter", constraints)));
+            body.put("sort", List.of(Map.of("metadata.chunkIndex", "asc")));
+            JsonNode response = search(searchPath(List.of(scope)), body);
+            var hits = (com.fasterxml.jackson.databind.node.ArrayNode) response.at("/hits/hits");
+            boolean hasMore = hits.size() > size;
+            if (hasMore) hits.remove(size);
+            var chunks = new ArrayList<Map<String, Object>>();
+            var sections = new LinkedHashMap<String, Map<String, Object>>();
+            int next = afterChunkIndex;
+            for (JsonNode hit : hits) {
+                validateBrowseHit(context.userId(), scope, hit);
+                var meta = hit.at("/_source/metadata");
+                next = meta.path("chunkIndex").asInt();
+                var item = new LinkedHashMap<String, Object>();
+                item.put("chunkId", meta.path("chunkId").asText());
+                item.put("chunkIndex", next);
+                item.put("sectionId", meta.path("sectionId").asText());
+                item.put("sectionTitle", meta.path("sectionTitle").asText());
+                item.put("pageKnown", meta.path("pageKnown").asBoolean());
+                item.put("pageStart", meta.path("pageStart").isIntegralNumber() ? meta.path("pageStart").asInt() : null);
+                item.put("pageEnd", meta.path("pageEnd").isIntegralNumber() ? meta.path("pageEnd").asInt() : null);
+                item.put("lowConfidence", meta.path("lowConfidence").asBoolean());
+                chunks.add(item);
+                String section = meta.path("sectionId").asText();
+                if (!section.isBlank()) sections.putIfAbsent(section, Map.of("sectionId", section,
+                        "title", meta.path("sectionTitle").asText(), "firstChunkIndexInBatch", next));
+            }
+            var candidates = "sections".equals(mode) ? new RetrievalCandidates(List.of(), List.of())
+                    : fuse(context.userId(), List.of(scope), response);
+            Set<String> supplied = new HashSet<>();
+            candidates.candidates().forEach(c -> supplied.add(c.chunkId()));
+            var data = new LinkedHashMap<String, Object>();
+            data.put("paperId", paperId.toString());
+            data.put("hasMore", hasMore);
+            data.put("nextAfterChunkIndex", hasMore ? next : null);
+            if ("sections".equals(mode)) {
+                data.put("sections", List.copyOf(sections.values()));
+                data.put("note", "分批扫描索引中的结构，章节可能跨批重复；无章节标识的分块不形成目录项。目录不是原文证据，不能证明全文结构完整。");
+            } else {
+                data.put("chunks", chunks);
+                data.put("omittedChunkIds", chunks.stream().map(c -> (String) c.get("chunkId")).filter(id -> !supplied.contains(id)).toList());
+                data.put("note", "只可引用 evidence；页码缺失、低置信度、重复原文或证据预算会导致片段未提供。分页游标前的遗漏需单独缩小范围读取；hasMore=false 不代表已读全文或全部章节。页读取可能包含跨页内容。");
+            }
+            verifyAccess(context.userId(), List.of(scope));
+            return new BrowseResult(data, candidates);
+        });
+    }
+
+    private void validateBrowseHit(Long userId, PaperScope scope, JsonNode hit) {
+        var meta = hit.at("/_source/metadata");
+        if (!scope.esIndexName().equals(hit.path("_index").asText())
+                || !userId.toString().equals(meta.path("ownerId").asText())
+                || !scope.paperId().toString().equals(meta.path("paperId").asText())
+                || scope.indexVersion() != meta.path("indexVersion").asInt()
+                || !scope.attemptToken().equals(meta.path("attemptToken").asText())
+                || !scope.embeddingModel().equals(meta.path("embeddingModel").asText())
+                || !scope.embeddingVersion().equals(meta.path("embeddingVersion").asText())
+                || !meta.path("chunkIndex").isIntegralNumber() || !meta.path("chunkIndex").canConvertToInt()
+                || meta.path("chunkIndex").asInt() < 0) throw new IllegalStateException("ES 返回了无效的结构来源");
+    }
+
+    public record BrowseResult(Map<String, Object> data, RetrievalCandidates candidates) { }
 
     RetrievalCandidates fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
         Map<String, JsonNode> hits = new HashMap<>();

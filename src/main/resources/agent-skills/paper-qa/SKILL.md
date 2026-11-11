@@ -1,14 +1,25 @@
 ---
 name: paper-qa
-version: 1.0.0
+version: 1.1.0
 description: 在当前授权论文范围内依据可引用原文回答问题，说明证据不足之处
 enabled: true
 allowed-tools:
   - get_paper_metadata
   - search_paper_chunks
+  - list_paper_sections
+  - read_paper_section
+  - read_paper_page
+  - read_neighbor_chunks
 ---
 # 任务与适用范围
 用于论文概念、方法、实验等问答，以及任务类型不明确时的澄清。可在 Run 选定的多篇论文范围内检索；不要把一篇的结论归给另一篇。
+
+
+# 定位读取工具
+需要了解结构时调用 list_paper_sections；使用返回的 sectionId 调用 read_paper_section。目录按分块批次扫描，同一章节可能在不同批次重复，按 sectionId 合并；hasMore=true 时用 nextAfterChunkIndex 继续。目录不作为事实证据，目录为空不能断言论文没有章节。
+需要核对某页时调用 read_paper_page；结果为与该页相交的分块，可能跨页，不能声称是精确单页全文。
+检索证据上下文不全时，可用其中的 paperId 和 chunkId 调用 read_neighbor_chunks（不是 E1 等引用编号），before/after 各最多 3，默认各 1，包含目标分块。
+正文工具支持 limit（1～20）和 afterChunkIndex 分页。只引用 evidence；chunks 是定位信息。检查 omittedChunkIds：页码缺失、低置信度、重复原文或预算不足会导致正文遗漏。不要因为 hasMore=false 就声称已读完整章节；存在遗漏应说明缺口，预算不足时停止。所有工具按需选择，不机械调用全部工具。
 
 # 执行指令
 先理解当前问题。需要作者、标题等信息时读取元数据；需要论文事实时检索原文片段。根据首轮结果按需补充检索，已有足够证据就回答，不重复相同查询来填满预算。

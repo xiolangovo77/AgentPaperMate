@@ -106,7 +106,7 @@ class AgentHarnessHttpTest {
                 new RetrievalCandidates(List.of("chunk-2", "not-evidence"), List.of(second)));
         dispatcher.dispatch(run);
         assertEquals(3, requests.size(), "不得出现 SDK 自动执行或自动续轮");
-        assertEquals(2, requests.getFirst().at("/parameters/tools").size());
+        assertEquals(6, requests.getFirst().at("/parameters/tools").size());
         assertEquals(1024, requests.getFirst().at("/parameters/max_tokens").asInt());
         var messages = requests.getLast().at("/input/messages");
         assertEquals("meta", messages.get(2).at("/tool_calls/0/id").asText());
@@ -423,7 +423,7 @@ class AgentHarnessHttpTest {
         assertEquals(skillId, run.getSkillId());
         assertEquals(2, requests.size());
         assertTrue(requests.getFirst().at("/input/messages/0/content").toString().contains(template));
-        assertEquals(2, requests.getFirst().at("/parameters/tools").size());
+        assertEquals(6, requests.getFirst().at("/parameters/tools").size());
         var retrieval = ArgumentCaptor.forClass(RetrievalRequest.class);
         verify(retriever, times(2)).retrieve(retrieval.capture(), any(), any());
         assertEquals(List.of(30L), retrieval.getAllValues().get(0).requestedPaperIds());
@@ -464,7 +464,7 @@ class AgentHarnessHttpTest {
             assertTrue(prompt.contains(section));
         assertTrue(prompt.contains("summary-template.md"));
         assertTrue(prompt.contains("未验证全文覆盖"));
-        assertEquals(2, requests.getFirst().at("/parameters/tools").size());
+        assertEquals(6, requests.getFirst().at("/parameters/tools").size());
         verify(store).complete(40L, new Answer(structured, List.of("E1")));
         verify(store, times(2)).modelCallStarted(40L);
         verify(store).toolCallStarted(40L, "summary", "search_paper_chunks");
@@ -493,7 +493,9 @@ class AgentHarnessHttpTest {
     void skillWhitelistRestrictsBothSchemaAndExecutionEvenWhenModelRequestsDeniedTool() {
         var qa = SkillTestSupport.router().select("问题");
         var metadataOnly = SkillTestSupport.replace(qa, "SKILL.md", qa.files().get("SKILL.md").replace("\r\n", "\n")
-                .replace("  - search_paper_chunks\n", ""));
+                .replace("  - search_paper_chunks\n", "")
+                .replace("  - list_paper_sections\n", "").replace("  - read_paper_section\n", "")
+                .replace("  - read_paper_page\n", "").replace("  - read_neighbor_chunks\n", ""));
         SkillTestSupport.attach(run, json, metadataOnly);
         replies.add(selection(search("denied")));
         replies.add(answer("当前缺少原文检索工具，无法确认"));
@@ -510,7 +512,7 @@ class AgentHarnessHttpTest {
     void noAllowedToolsHasExplicitLimitAndDoesNotAdvertiseTools() {
         var qa = SkillTestSupport.router().select("问题");
         var none = SkillTestSupport.replace(qa, "SKILL.md", qa.files().get("SKILL.md").replace("\r\n", "\n")
-                .replace("allowed-tools:\n  - get_paper_metadata\n  - search_paper_chunks", "allowed-tools: []"));
+                .replace("allowed-tools:\n  - get_paper_metadata\n  - search_paper_chunks\n  - list_paper_sections\n  - read_paper_section\n  - read_paper_page\n  - read_neighbor_chunks", "allowed-tools: []"));
         SkillTestSupport.attach(run, json, none);
         replies.add(answer("工具不可用，无法核验论文原文"));
         dispatcher.dispatch(run);

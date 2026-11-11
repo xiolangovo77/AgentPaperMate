@@ -2,6 +2,8 @@
 
 基于原型视觉与交互实现的 Vue 3 + TypeScript 研究工作台。使用 Vite、Vue Router、Pinia、Axios、Lucide、Marked + DOMPurify 与 PDF.js。正式应用只请求 Java 后端，不包含原型论文数据或 Mock 开关。
 
+2026-11-12 聊天页面已重构为宽幅阅读工作台：支持折叠导航、按需资料抽屉、紧凑执行摘要、正文引用定位和数学公式，多行输入与消息滚动区域分离。组件变更与验证边界见 [聊天 UI 重构记录](docs/chat-ui-refactor.md)。
+
 2026-11-11 已适配后端 Agent 执行入口、技能选择和工具进度事件。聊天室可选择 RAG / Agent；此前接入的论文分页、详情、处理任务、PDF 文件与完整资料范围更新接口继续保留。当前功能、剩余接口和真实验证边界见 [对接状态](docs/frontend-backend-gaps.md)。本轮仅修改前端，不包含评测功能。
 
 ## 启动

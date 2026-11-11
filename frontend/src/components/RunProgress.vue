@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Check, ChevronDown, CircleAlert, LoaderCircle, Wrench } from 'lucide-vue-next'
 import type { RunEvent, RunStatus } from '../types/api'
 import { runProgress } from '../utils/runProgress'
-import { terminal } from '../utils/runObserver'
+import { terminal, stageLabels } from '../utils/runObserver'
 
-const props = defineProps<{ events: RunEvent[]; status?: RunStatus }>()
+const props = defineProps<{ events: RunEvent[]; status?: RunStatus; stage?: string; active?: boolean; reconnecting?: boolean; errorMessage?: string }>()
+const expanded = ref(false)
+// Only a terminal transition resets disclosure; new SSE events do not override the reader.
+watch(() => props.status, (status, previous) => {
+  if (status && terminal(status) && status !== previous) expanded.value = false
+})
+const running = computed(() => props.active || props.status === 'pending' || props.status === 'running')
+const statusLabel = computed(() => running.value ? props.stage || '执行中' : props.status ? stageLabels[props.status] : '执行记录')
 const progress = computed(() => runProgress(props.events, props.status))
 const labels = { running: '执行中', completed: '已完成', failed: '调用失败', unconfirmed: '任务已结束，未收到工具结果' }
 const counts = computed(() => {
@@ -30,13 +37,15 @@ const errors: Record<string, string> = {
 </script>
 
 <template>
-  <details v-if="progress.skill || progress.tools.length" class="run-progress" open>
+  <details v-if="status || active || progress.skill || progress.tools.length" class="run-progress" :open="expanded" @toggle="expanded = ($event.target as HTMLDetailsElement).open">
     <summary>
       <ChevronDown :size="14" class="expand-icon" aria-hidden="true" />
-      <span class="progress-title">执行过程</span>
-      <span v-if="progress.skill" class="skill-badge">{{ progress.skill }}</span>
-      <span v-if="progress.tools.length" class="call-count">{{ progress.tools.length }} 次调用</span>
+      <LoaderCircle v-if="running" :size="14" class="spin" aria-hidden="true" />
+      <span class="progress-title">{{ progress.skill || progress.tools.length ? 'Agent 执行过程' : '执行过程' }}</span>
+      <span class="progress-status" :class="status" role="status">{{ statusLabel }}{{ running && reconnecting ? ' · 正在恢复连接' : '' }}</span>
+      <span v-if="progress.tools.length" class="call-count">{{ progress.tools.length }} 次工具调用<span v-if="counts.failed" class="failed-count"> · {{ counts.failed }} 次调用失败</span></span>
     </summary>
+    <p v-if="progress.skill" class="skill-selection">已选择技能：<span class="skill-badge">{{ progress.skill }}</span></p>
     <p v-if="progress.tools.length" class="progress-overview">
       <span>已完成 {{ counts.completed }}</span>
       <span v-if="counts.running" class="running-count">执行中 {{ counts.running }}</span>
@@ -54,7 +63,7 @@ const errors: Record<string, string> = {
         </span>
         <span class="tool-content">
           <span class="tool-heading"><span class="step-number">{{ index + 1 }}.</span> {{ tool.label }}</span>
-          <small v-if="tool.errorCode" class="tool-error" :title="tool.errorCode">{{ errors[tool.errorCode] || '本次调用未成功' }}</small>
+          <small v-if="tool.errorCode" class="tool-error">{{ errors[tool.errorCode] || '本次调用未成功' }} · {{ tool.errorCode }}</small>
           <small v-else-if="tool.description" class="tool-description">{{ tool.description }}</small>
         </span>
         <span class="tool-result">
@@ -64,10 +73,11 @@ const errors: Record<string, string> = {
       </li>
     </ol>
   </details>
+  <p v-if="errorMessage || status === 'failed' || status === 'timeout'" class="run-failure" role="alert">{{ errorMessage || (status === 'timeout' ? '任务超时，可重新执行此问题。' : '任务执行失败，可重新执行此问题。') }}</p>
 </template>
 
 <style scoped>
-.run-progress { padding: 14px 16px; border-top: 1px solid var(--line); background: #fafaff; font-size: 12px; color: var(--muted); }
+.run-progress { padding: 6px 0; font-size: 13px; color: var(--muted); }
 summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; cursor: pointer; color: var(--text); line-height: 1.8; list-style: none; }
 summary::-webkit-details-marker { display: none; }
 summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 4px; }
@@ -75,7 +85,11 @@ summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; 
 details:not([open]) .expand-icon { transform: rotate(-90deg); }
 .progress-title { font-weight: 600; }
 .skill-badge { padding: 1px 8px; border-radius: 6px; background: var(--soft); color: var(--primary); font-size: 11px; }
-.call-count { margin-left: auto; font-size: 11px; color: var(--muted); }
+.call-count { font-size: 12px; color: var(--muted); }
+.progress-status { color: var(--muted); font-size: 12px; }
+.progress-status.failed, .progress-status.timeout, .run-failure { color: #b6413c; }
+.run-failure { font-size: 13px; margin: 6px 0; overflow-wrap: anywhere; }
+.skill-selection { margin: 12px 0 6px 22px; }
 .progress-overview { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 9px 0 8px 22px; font-size: 11px; }
 .running-count { color: var(--primary); }
 .failed-count, .tool-error { color: #b6413c; }
@@ -98,7 +112,7 @@ li + li { border-top: 1px solid var(--line); }
 @media (max-width: 480px) {
   li { column-gap: 8px; }
   .tool-result { max-width: 100px; }
-  .call-count { width: 100%; margin-left: 22px; }
+  summary { gap: 6px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .expand-icon { transition: none; }

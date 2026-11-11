@@ -1,6 +1,7 @@
 package com.ecnu.agentpapermate.service.run.rag;
 
 import com.ecnu.agentpapermate.agent.context.AgentRunContext;
+import com.ecnu.agentpapermate.rag.model.ConversationMessage;
 import com.ecnu.agentpapermate.entity.vo.run.EventView;
 import com.ecnu.agentpapermate.entity.vo.run.RunView;
 import com.ecnu.agentpapermate.entity.vo.run.RunEvaluationView;
@@ -126,15 +127,15 @@ public class RunQueries {
         return citations.selectList(new QueryWrapper<MessageCitation>().eq("message_id", messageId).orderByAsc("id"));
     }
 
-    public List<String> previousQuestions(AgentRunContext context) {
-        //1、历史仅用于追问理解，旧答案及旧引用不进入本次证据集合
-        List<ChatMessage> recent = messages.selectPreviousQuestions(context.getSessionId(), context.getRunId(), 6);
-        List<String> result = new ArrayList<>();
-        int budget = 4000;
+    public List<ConversationMessage> recentMessages(AgentRunContext context) {
+        //1、取最近12条用户/助手正文；保留角色和原有长度预算，旧答案及旧引用不进入本次证据集合
+        List<ChatMessage> recent = messages.selectRecentMessages(context.getSessionId(), context.getRunId(), 12);
+        List<ConversationMessage> result = new ArrayList<>();
+        int budget = 40000;
         for (ChatMessage message : recent) {
             String content = message.getContent();
             if (content.length() > budget) continue;
-            result.add(content); budget -= content.length();
+            result.add(new ConversationMessage(message.getRole(), content)); budget -= content.length();
         }
         Collections.reverse(result);
         return result;

@@ -6,6 +6,7 @@ import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.ecnu.agentpapermate.service.PaperService;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
+import com.ecnu.agentpapermate.rag.model.ConversationMessage;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
@@ -133,7 +134,8 @@ class RagHttpTest {
         for (String value : List.of("metadata.ownerId", "20", "metadata.paperId", "30", "metadata.indexVersion",
                 "metadata.attemptToken", "attempt", "_index", "paper_test", "metadata.pageKnown")) assertTrue(constraints.contains(value), value);
         assertEquals(3, searches.getLast().at("/knn/query_vector").size());
-        var answer = generator.generate(runContext, evidence, List.of("前一个问题"));
+        var answer = generator.generate(runContext, evidence, List.of(
+                new ConversationMessage("user", "前一个问题"), new ConversationMessage("assistant", "前一个回答")));
         assertEquals("答案[E1]", answer.content());
         verify(store).addModelUsage(40L, 10L, 20L);
         var chat = requests.get("/api/v1/services/aigc/multimodal-generation/generation").getFirst();
@@ -146,6 +148,10 @@ class RagHttpTest {
         assertTrue(rules.contains("每个 ID 只出现一次"));
         assertTrue(rules.contains("数组每项都在正文中有对应标记"));
         assertTrue(chat.at("/input/messages/1/content/0/text").asText().contains("原文"));
+        var history = json.tree(chat.at("/input/messages/1/content/0/text").asText()).path("recentMessages");
+        assertEquals("user", history.get(0).path("role").asText());
+        assertEquals("assistant", history.get(1).path("role").asText());
+        assertEquals("前一个回答", history.get(1).path("content").asText());
     }
 
     @Test

@@ -19,7 +19,7 @@ import java.util.Optional;
 public class FixedRagExecutor implements RunExecutor {
     /** 任务事务服务，检查运行状态并保存检索和回答生成阶段。 */
     private final RunStore store;
-    /** 任务查询服务，读取有长度预算的历史用户问题以理解追问。 */
+    /** 任务查询服务，读取有长度预算的历史用户和助手消息以理解追问。 */
     private final RunQueries queries;
     /** 论文检索器，在本次 Run 的资料范围内检索和融合候选。 */
     private final RagRetriever retriever;
@@ -48,6 +48,6 @@ public class FixedRagExecutor implements RunExecutor {
                     List.of()));
         }
         if (!store.answerGenerationStarted(runId)) return Optional.empty();
-        return Optional.of(generator.generate(context, evidence, queries.previousQuestions(context)));
+        return Optional.of(generator.generate(context, evidence, queries.recentMessages(context)));
     }
 }

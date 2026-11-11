@@ -51,13 +51,22 @@ class RunMapperConfigurationTest {
                 expired.getParameterMappings().stream().map(ParameterMapping::getProperty).toList());
 
         for (String statement : List.of("AgentRunMapper.selectPendingCandidates", "RunEventMapper.selectAfterSequence",
-                "ChatMessageMapper.selectPreviousQuestions", "SessionPaperMapper.selectActiveForRun")) {
+                "ChatMessageMapper.selectRecentMessages", "SessionPaperMapper.selectActiveForRun")) {
             var bound = configuration.getMappedStatement(prefix + statement).getBoundSql(Map.of(
                     "runId", 40L, "sessionId", 10L, "beforeRunId", 40L, "after", 2L, "limit", 6));
             assertTrue(bound.getSql().contains("is_delete = 0"), statement);
             assertTrue(bound.getSql().contains("LIMIT ?"), statement);
             assertEquals("limit", bound.getParameterMappings().getLast().getProperty(), statement);
         }
+        String historySql = configuration.getMappedStatement(prefix + "ChatMessageMapper.selectRecentMessages")
+                .getBoundSql(Map.of("sessionId", 10L, "beforeRunId", 40L, "limit", 12))
+                .getSql().replaceAll("\\s+", " ").strip();
+        assertTrue(historySql.contains("session_id = ?"));
+        assertTrue(historySql.contains("role IN ('user', 'assistant')"));
+        assertTrue(historySql.contains("message_type = 'text'"));
+        assertTrue(historySql.contains("run_id < ?"));
+        assertTrue(historySql.endsWith("ORDER BY id DESC LIMIT ?"));
+
         //2、释放会话仍需匹配当前任务，不能因迁移 SQL 而清除其他任务的占用
         String releaseSql = configuration.getMappedStatement(prefix + "ChatSessionMapper.releaseActiveRun")
                 .getBoundSql(Map.of("sessionId", 10L, "runId", 40L)).getSql().replaceAll("\\s+", " ");

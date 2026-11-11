@@ -93,7 +93,7 @@ class RunDispatcherTest {
     void fullCandidatesAreSavedBeforeGeneratingWithOnlyFinalEvidence() {
         var retrieval = RunStoreTest.retrieval();
         when(retriever.retrieve(any(), any(), any())).thenReturn(RunStoreTest.candidates());
-        when(queries.previousQuestions(any())).thenReturn(List.of());
+        when(queries.recentMessages(any())).thenReturn(List.of());
         when(generator.generate(any(), eq(retrieval.evidence()), eq(List.of()))).thenReturn(RunStoreTest.answer());
         dispatcher.dispatch(run);
         var order = inOrder(store, generator);
@@ -103,7 +103,7 @@ class RunDispatcherTest {
         order.verify(generator).generate(context.capture(), eq(retrieval.evidence()), eq(List.of()));
         order.verify(store).complete(1L, RunStoreTest.answer());
         verify(retriever).retrieve(any(), same(context.getValue().getRetrievalContext()), eq(run.getDeadline()));
-        verify(queries).previousQuestions(same(context.getValue()));
+        verify(queries).recentMessages(same(context.getValue()));
         assertEquals(retrieval.retrievedChunkIds(), context.getValue().getEvidenceRegistry().getRetrievedChunkIds());
     }
 }

@@ -16,10 +16,11 @@
         <result column="is_delete" property="isDelete" />
     </resultMap>
 
-    <select id="selectPreviousQuestions" resultMap="BaseResultMap">
+    <select id="selectRecentMessages" resultMap="BaseResultMap">
         SELECT * FROM chat_message
         WHERE is_delete = 0 AND session_id = #{sessionId}
-          AND role = 'user' AND run_id &lt; #{beforeRunId}
+          AND role IN ('user', 'assistant') AND message_type = 'text'
+          AND run_id &lt; #{beforeRunId}
         ORDER BY id DESC
         LIMIT #{limit}
     </select>

@@ -16,8 +16,8 @@ import java.util.List;
  */
 @Mapper
 public interface ChatMessageMapper extends BaseMapper<ChatMessage> {
-    /** 查询当前任务之前的用户问题，按消息 ID 倒序截取历史。 */
-    List<ChatMessage> selectPreviousQuestions(@Param("sessionId") Long sessionId,
+    /** 查询当前任务之前的用户和助手正文消息，按消息 ID 倒序截取历史。 */
+    List<ChatMessage> selectRecentMessages(@Param("sessionId") Long sessionId,
                                              @Param("beforeRunId") Long beforeRunId,
                                              @Param("limit") int limit);
 }

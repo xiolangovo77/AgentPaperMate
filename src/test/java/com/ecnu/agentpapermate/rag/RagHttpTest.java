@@ -141,6 +141,10 @@ class RagHttpTest {
         assertEquals(2048, chat.at("/parameters/max_tokens").asInt());
         assertFalse(chat.at("/parameters/enable_search").asBoolean());
         assertEquals("system", chat.at("/input/messages/0/role").asText());
+        String rules = chat.at("/input/messages/0/content/0/text").asText();
+        assertTrue(rules.contains("[E1][E2]"));
+        assertTrue(rules.contains("每个 ID 只出现一次"));
+        assertTrue(rules.contains("数组每项都在正文中有对应标记"));
         assertTrue(chat.at("/input/messages/1/content/0/text").asText().contains("原文"));
     }
 

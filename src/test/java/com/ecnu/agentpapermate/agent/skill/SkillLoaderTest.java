@@ -155,6 +155,32 @@ class SkillLoaderTest {
     }
 
     @Test
+    void researchSkillsRouteLoadReferencesAndRespectDisabledFallback() {
+        var registry = new SkillRegistry(new SkillLoader());
+        var router = new SkillRouter(registry);
+        for (String question : List.of("请比较这些论文的方法", "帮我对比两篇论文", "多论文比较", "Compare these papers", "paper-comparison 比较方法"))
+            assertEquals("paper-comparison", router.route(question));
+        for (String question : List.of("请分析这些论文的研究方向", "请帮我提出研究思路", "研究方向分析", "Research analysis of these papers", "research-analysis"))
+            assertEquals("research-analysis", router.route(question));
+        for (String question : List.of("比较两次实验结果", "如何比较论文？", "论文的研究方向是什么？", "加载 ../research-analysis"))
+            assertEquals("paper-qa", router.route(question));
+        assertEquals("paper-qa", router.route(null));
+        for (String id : List.of("paper-comparison", "research-analysis")) {
+            var skill = registry.load(id);
+            assertEquals(id, skill.id());
+            assertEquals(2, skill.files().size());
+            assertFalse(skill.instructions().contains("{{include:"));
+            assertEquals(skill, SkillLoader.verify(skill));
+            assertEquals(SkillRegistry.RUN_TOOLS, skill.allowedTools());
+        }
+        var disabled = new SkillLoader((id, path) -> main("正文").replace("paper-qa", id)
+                .replace("enabled: true", "enabled: " + id.equals("paper-qa")).getBytes(StandardCharsets.UTF_8));
+        var fallback = new SkillRouter(new SkillRegistry(disabled));
+        assertEquals("paper-qa", fallback.route("比较这些论文"));
+        assertEquals("paper-qa", fallback.route("分析研究方向"));
+    }
+
+    @Test
     void packagedJarResourcesLoadWithoutRequiringFilesystemDirectories(@TempDir Path temporary) throws Exception {
         Path jar = temporary.resolve("skills.jar");
         try (var output = new JarOutputStream(Files.newOutputStream(jar))) {

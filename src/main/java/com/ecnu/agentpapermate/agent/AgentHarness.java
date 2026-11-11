@@ -61,6 +61,11 @@ public class AgentHarness {
             var clarification = new Answer("当前仅支持单篇论文总结。请将本次资料范围调整为一篇论文后重新请求总结；当前尚未生成论文总结。", List.of());
             return store.agentAnswerReady(context.getRunId(), List.of()) ? Optional.of(clarification) : Optional.empty();
         }
+        int paperCount = context.getRetrievalContext().allowedScopes().size();
+        if ("paper-comparison".equals(skill.id()) && (paperCount < 2 || paperCount > 5)) {
+            var clarification = new Answer("多论文比较需要本次资料范围包含 2～5 篇论文。请调整资料范围后重新请求比较；当前尚未生成比较结果。", List.of());
+            return store.agentAnswerReady(context.getRunId(), List.of()) ? Optional.of(clarification) : Optional.empty();
+        }
         Set<String> allowedTools = new HashSet<>(SkillRegistry.RUN_TOOLS);
         allowedTools.retainAll(registry.names());
         allowedTools.retainAll(skill.allowedTools());

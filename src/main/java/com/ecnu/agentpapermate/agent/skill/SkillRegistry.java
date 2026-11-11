@@ -16,7 +16,9 @@ public class SkillRegistry {
     private final SkillLoader loader;
 
     @Autowired
-    public SkillRegistry(SkillLoader loader) { this(loader, List.of("paper-qa", "paper-summary")); }
+    public SkillRegistry(SkillLoader loader) {
+        this(loader, List.of("paper-qa", "paper-summary", "paper-comparison", "research-analysis"));
+    }
 
     SkillRegistry(SkillLoader loader, List<String> ids) {
         this.loader = loader;

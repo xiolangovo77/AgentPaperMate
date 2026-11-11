@@ -75,7 +75,7 @@ watch(messageListElement, element => {
   messageResizeObserver.observe(element)
 }, { flush: 'post' })
 const prompts = computed(() => executorType.value === 'agent'
-  ? [...(papers.value.length === 1 ? ['请总结这篇论文的研究背景、问题、方法、创新、实验与局限'] : []), '论文的核心研究问题与创新点是什么？', '有哪些局限和值得继续研究的问题？']
+  ? [...(papers.value.length === 1 ? ['请总结这篇论文的研究背景、问题、方法、创新、实验与局限'] : []), ...(papers.value.length >= 2 && papers.value.length <= 5 ? ['请比较这些论文的方法、实验结果与局限'] : []), '请分析这些论文的研究方向，提出可验证的假设与实验方案', '论文的核心研究问题与创新点是什么？']
   : ['总结核心研究问题与创新点', '对比方法与实验结论', '有哪些局限和值得继续研究的问题？'])
 const selectedId = computed(() => typeof route.params.id === 'string' && route.params.id ? route.params.id : undefined)
 const canSend = computed(() => !!session.value && !!draft.value.trim() && allReady.value && !active.value && !submitting.value && !uncertain.value)
@@ -212,7 +212,7 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
                 <option value="agent">Agent 自主问答</option>
               </select>
             </div>
-            <p id="executor-hint" class="execution-hint">{{ executorType === 'agent' ? '按问题自动选择问答或总结技能，按需多次读取论文信息、检索原文。结构化总结目前仅支持单篇论文。' : '检索所选论文的相关证据后生成回答。' }}</p>
+            <p id="executor-hint" class="execution-hint">{{ executorType === 'agent' ? '按问题自动选择问答、总结、多论文比较或研究分析技能。总结支持单篇论文，比较支持 2～5 篇；研究方向建议需进一步验证。' : '检索所选论文的相关证据后生成回答。' }}</p>
             <p v-if="executorType === 'agent' && papers.length > 1" class="execution-hint">需要结构化总结时，请先将资料范围调整为一篇论文。</p>
             <div v-if="uncertain" class="notice"><div>上次提交结果尚未确认。恢复将复用原请求，不会重复创建任务。<button class="text-link" :disabled="submitting" @click="chat.send()">{{ submitting ? '正在确认…' : '确认提交结果' }}</button></div></div>
             <div v-if="!messages.some(message => message.role === 'user')" class="quick-prompts"><button v-for="prompt in prompts" :key="prompt" class="quick-prompt" :disabled="submitting || !!uncertain" @click="draft = prompt">{{ prompt }}</button></div>

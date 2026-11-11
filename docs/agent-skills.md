@@ -1,4 +1,34 @@
-# 第五批：基础 Skill 注册、加载与路由
+# Skill 注册、加载与路由
+
+## 研究技能扩展（2026-11-11）
+
+当前注册四个技能：`paper-qa`、`paper-summary`、`paper-comparison`、`research-analysis`。新增技能均通过现有快照、工具白名单、预算、引用校验与 Run 完成流程执行。
+
+在聊天室选择 **Agent 自主问答**，可直接使用：
+
+| 请求示例 | 技能 | 资料范围 |
+| --- | --- | --- |
+| 请比较这些论文的方法、实验结果与局限 | `paper-comparison` | 2～5 篇；不符合时直接澄清，不调用模型 |
+| 请分析这些论文的研究方向，提出可验证的假设与实验方案 | `research-analysis` | 当前范围内的单篇或多篇论文 |
+
+接口仍为 `/agentRun/add`，提交 `executorType: "agent"` 和上述 `question`；省略执行器仍使用固定 RAG。前端增加比较与研究分析快捷问题及范围提示，不增加 `requestedSkillId` 字段。
+
+规则仅匹配当前问题的明确命令：比较/对比需包含“论文/文献”，支持“多论文比较”、`paper-comparison`、`compare ... papers`；研究命令匹配分析/梳理/探索/提出/推荐/生成与研究思路/方向/选题，也支持“研究方向分析”、`research-analysis`、`research analysis`。研究分析优先于比较、总结；未识别时仍回退问答，不保证所有自然语言表达均命中。
+
+新增资源：
+
+```text
+agent-skills/paper-comparison/SKILL.md
+agent-skills/paper-comparison/references/comparison-template.md
+agent-skills/research-analysis/SKILL.md
+agent-skills/research-analysis/references/analysis-template.md
+```
+
+两个技能要求通过已有 `search_paper_chunks` 的 `requestedPaperIds` 逐篇取证。比较模板输出证据覆盖矩阵；研究模板区分作者结论、系统推测和待验证建议，列出假设、实验、对照、指标和缺口。矩阵随 `answer` 保存，不新增结构化数据库字段或语义覆盖校验器。逐篇检索和内容完整性由指令引导；后端强制保证权限、工具白名单和引用身份，不能保证模型始终遵循任务步骤。
+
+测试使用本地 HTTP 模型替身与真实 SDK/Harness/工具流程，检查路由、模板展开、快照保存、逐篇检索参数及跨论文引用；未通过真实模型评测任务质量，后续仍需固定样本及质量、成本评估。
+
+以下为基础技能接入时的设计记录；其中“本批”指最初两个基础技能。
 
 本批在[第四批串行循环](./agent-loop.md)上接入 `paper-qa`、`paper-summary`。只使用 `get_paper_metadata`、`search_paper_chunks`，没有新增模型执行入口、自动工具执行主体、联网、脚本、多 Agent、章节或页面工具。
 

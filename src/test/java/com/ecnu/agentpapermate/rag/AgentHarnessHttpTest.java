@@ -399,6 +399,59 @@ class AgentHarnessHttpTest {
     }
 
     @Test
+    void comparisonUsesPerPaperSearchesAndCitesBothPapers() {
+        verifyResearchSkillExecution("请比较这些论文的方法", "paper-comparison", "comparison-template.md");
+    }
+
+    @Test
+    void researchAnalysisUsesTemplateAndCitesSourcePapers() {
+        verifyResearchSkillExecution("请分析这些论文的研究方向", "research-analysis", "analysis-template.md");
+    }
+
+    private void verifyResearchSkillExecution(String question, String skillId, String template) {
+        run.setUserQuery(question); configure("{\"maxTokens\":1024}");
+        var first = RunStoreTest.scope();
+        var second = new PaperScope(31L, "另一篇论文", first.indexVersion(), first.attemptToken(),
+                first.esIndexName(), first.embeddingModel(), first.embeddingVersion(), first.embeddingDimension(), first.fileUrl());
+        run.setPapersSnapshot(json.write(List.of(first, second)));
+        replies.add(selection(tool("first", "search_paper_chunks", "{\"query\":\"方法与局限\",\"requestedPaperIds\":[\"30\"]}"),
+                tool("second", "search_paper_chunks", "{\"query\":\"方法与局限\",\"requestedPaperIds\":[\"31\"]}")));
+        replies.add(answer("原文依据[E1][E2]；建议尚待验证，检索覆盖存在缺口。", "E1", "E2"));
+        when(retriever.retrieve(any(), any(), any())).thenReturn(RunStoreTest.candidates(),
+                new RetrievalCandidates(List.of("other-chunk"), List.of(new EvidenceCandidate(second, "other-chunk", 1, 1, "另一篇论文的方法与局限"))));
+        dispatcher.dispatch(run);
+        assertEquals(skillId, run.getSkillId());
+        assertEquals(2, requests.size());
+        assertTrue(requests.getFirst().at("/input/messages/0/content").toString().contains(template));
+        assertEquals(2, requests.getFirst().at("/parameters/tools").size());
+        var retrieval = ArgumentCaptor.forClass(RetrievalRequest.class);
+        verify(retriever, times(2)).retrieve(retrieval.capture(), any(), any());
+        assertEquals(List.of(30L), retrieval.getAllValues().get(0).requestedPaperIds());
+        assertEquals(List.of(31L), retrieval.getAllValues().get(1).requestedPaperIds());
+        verify(store).complete(40L, new Answer("原文依据[E1][E2]；建议尚待验证，检索覆盖存在缺口。", List.of("E1", "E2")));
+        verify(store, never()).fail(anyLong(), anyString(), anyString(), anyBoolean());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 6})
+    void comparisonRejectsUnsupportedScopeBeforeModelAndTools(int count) {
+        run.setUserQuery("请比较这些论文"); configure("{\"maxTokens\":1024}");
+        var base = RunStoreTest.scope();
+        var scopes = new ArrayList<PaperScope>();
+        for (int i = 0; i < count; i++) scopes.add(new PaperScope(30L + i, "论文" + i, base.indexVersion(), base.attemptToken(),
+                base.esIndexName(), base.embeddingModel(), base.embeddingVersion(), base.embeddingDimension(), base.fileUrl()));
+        run.setPapersSnapshot(json.write(scopes));
+        dispatcher.dispatch(run);
+        assertTrue(requests.isEmpty());
+        verifyNoInteractions(retriever, papers);
+        var result = ArgumentCaptor.forClass(Answer.class);
+        verify(store).complete(eq(40L), result.capture());
+        assertTrue(result.getValue().content().contains("2～5"));
+        assertTrue(result.getValue().evidenceIds().isEmpty());
+        verify(store, never()).modelCallStarted(anyLong());
+    }
+
+    @Test
     void summaryUsesFrozenTemplateAndOnlyExistingReadTools() {
         run.setUserQuery("请总结这篇论文"); configure("{\"maxTokens\":1024}");
         replies.add(selection(search("summary")));

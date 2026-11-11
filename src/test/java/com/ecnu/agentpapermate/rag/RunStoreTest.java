@@ -142,6 +142,20 @@ class RunStoreTest {
     }
 
     @Test
+    void researchSkillSnapshotIsPersistedAtCreation() {
+        var request = request(); request.setExecutorType("agent"); request.setQuestion("请分析这些论文的研究方向");
+        store.create(request, 20L);
+        var captured = ArgumentCaptor.forClass(AgentRun.class);
+        verify(runs).insert(captured.capture());
+        var selected = captured.getValue();
+        var skill = json.skillSnapshot(selected.getModelConfig());
+        assertEquals("research-analysis", selected.getSkillId());
+        assertTrue(skill.files().containsKey("references/analysis-template.md"));
+        assertEquals(skill.contentHash(), selected.getSkillContentHash());
+        assertEquals(skill, com.ecnu.agentpapermate.agent.skill.SkillLoader.verify(skill));
+    }
+
+    @Test
     void summarySelectionAndSnapshotArePersistedOnceAndStartedEventContainsOnlyMetadata() {
         var request = request(); request.setExecutorType("agent"); request.setQuestion("请总结这篇论文");
         store.create(request, 20L);

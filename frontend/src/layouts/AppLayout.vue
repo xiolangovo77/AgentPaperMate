@@ -21,7 +21,7 @@ async function logout() {
 }
 </script>
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'chat-shell': route.path.startsWith('/chat/') }">
     <aside class="sidebar">
       <RouterLink to="/" class="brand"><div class="brand-mark">AP</div><div><div class="brand-name">AgentPaperMate</div><div class="brand-sub">RESEARCH WORKSPACE</div></div></RouterLink>
       <div class="workspace-pill"><span class="status-dot"></span> 我的研究工作空间</div>

@@ -7,6 +7,13 @@ import { downloadMarkdown } from '../utils/format'
 import { observeRun, terminal } from '../utils/runObserver'
 import { paperDetails, readScope } from '../utils/papers'
 
+interface RunHistory {
+  run: Run | null
+  events: RunEvent[]
+  loading: boolean
+  error: string
+}
+
 export function useChat() {
   const recovery = useChatStore()
   const paperInfo = ref<Record<string, PaperDetail>>({}), checkingPapers = ref(false), readinessError = ref('')
@@ -16,6 +23,7 @@ export function useChat() {
   const messagePage = ref(1), messagePages = ref(1), moreBusy = ref(false), messageError = ref('')
   const run = ref<Run | null>(null), stage = ref(''), connection = ref('stopped'), runError = ref(''), runId = ref('')
   const executorType = ref<ExecutorType>('rag'), runEvents = ref<RunEvent[]>([])
+  const runHistory = ref<Record<string, RunHistory>>({})
   const submitting = ref(false), cancelling = ref(false), exporting = ref(false)
   const active = computed(() => !!runId.value && (!run.value || !terminal(run.value.status)))
   const uncertain = computed(() => session.value ? recovery.pending[session.value.id] : undefined)
@@ -24,6 +32,38 @@ export function useChat() {
   let observer: ReturnType<typeof observeRun> | undefined, lastTerminal = ''
   let scopeEpoch = 0, refreshMessagesAfterFlight = false
   let readinessEpoch = 0, readinessTimer: ReturnType<typeof setTimeout> | undefined
+
+  async function loadRunHistory(id: string) {
+    if (id === runId.value || runHistory.value[id]?.loading) return
+    const token = epoch
+    const entry = runHistory.value[id] = { run: runHistory.value[id]?.run || null, events: runHistory.value[id]?.events || [], loading: true, error: '' }
+    try {
+      const [snapshot, firstPage] = await Promise.all([runApi.get(id), runApi.events(id, '0')])
+      if (token !== epoch || id === runId.value) return
+      let page = firstPage, cursor = '0'
+      const events = new Map<string, RunEvent>()
+      while (true) {
+        const before = cursor
+        for (const event of page) {
+          if (event.runId !== id || !/^\d+$/.test(event.eventId)) continue
+          events.set(event.eventId, event)
+          if (BigInt(event.eventId) > BigInt(cursor)) cursor = event.eventId
+        }
+        if (page.length < 100 || cursor === before) break
+        page = await runApi.events(id, cursor)
+        if (token !== epoch || id === runId.value) return
+      }
+      runHistory.value[id] = { run: snapshot, events: [...events.values()].sort((a, b) => BigInt(a.eventId) < BigInt(b.eventId) ? -1 : 1), loading: false, error: '' }
+    } catch (e) {
+      if (token === epoch && id !== runId.value) runHistory.value[id] = { ...entry, loading: false, error: messageOf(e) }
+    }
+  }
+  // Restore each visible run, including questions whose execution failed without an answer.
+  watch([messages, runId, loading], () => {
+    if (loading.value) return
+    const ids = new Set(messages.value.filter(message => ['user', 'assistant'].includes(message.role)).map(message => message.runId))
+    for (const id of ids) if (id && id !== runId.value && !runHistory.value[id]) void loadRunHistory(id)
+  })
 
   async function checkReadiness() {
     clearTimeout(readinessTimer)
@@ -70,12 +110,14 @@ export function useChat() {
   }
   function observe(id: string) {
     observer?.stop(); runEvents.value = []; runId.value = id; const token = epoch
+    runHistory.value[id] = { run: run.value?.runId === id ? run.value : null, events: runEvents.value, loading: true, error: '' }
     observer = observeRun({
       runId: id, apiBase,
       getRun: () => runApi.get(id), getEvents: cursor => runApi.events(id, cursor),
       onRun: value => {
         if (token !== epoch) return
         run.value = value; runError.value = ''
+        runHistory.value[id] = { run: value, events: runEvents.value, loading: false, error: '' }
         if (!stage.value || terminal(value.status)) stage.value = value.status
         if (terminal(value.status) && lastTerminal !== `${id}:${value.status}`) {
           lastTerminal = `${id}:${value.status}`
@@ -85,10 +127,11 @@ export function useChat() {
       onEvent: event => {
         if (token !== epoch) return
         runEvents.value.push(event); stage.value = event.type; runError.value = ''
+        runHistory.value[id]!.error = ''
         if (event.type === 'skill_selected' && active.value) executorType.value = 'agent'
       },
       onConnection: value => { if (token === epoch) connection.value = value },
-      onError: e => { if (token === epoch) runError.value = messageOf(e) },
+      onError: e => { if (token === epoch) { runError.value = messageOf(e); runHistory.value[id]!.error = runError.value; runHistory.value[id]!.loading = false } },
     })
   }
   async function open(id?: string) {
@@ -98,7 +141,7 @@ export function useChat() {
     clearTimeout(readinessTimer); readinessEpoch++; paperInfo.value = {}; readinessError.value = ''; checkingPapers.value = false
     session.value = null; messages.value = []; papers.value = []; error.value = ''; messageError.value = ''; draftError.value = ''
     draft.value = ''; savedDraft.value = ''; run.value = null; runId.value = ''; runError.value = ''; stage.value = ''; lastTerminal = ''; moreBusy.value = false
-    runEvents.value = []; executorType.value = (id && recovery.pending[id]?.executorType) || 'rag'
+    runEvents.value = []; runHistory.value = {}; executorType.value = (id && recovery.pending[id]?.executorType) || 'rag'
     if (!id) { loading.value = false; return }
     loading.value = true
     try {
@@ -214,5 +257,5 @@ export function useChat() {
   function beforeUnload(event: BeforeUnloadEvent) { if (dirty.value || submitting.value || uncertain.value) { event.preventDefault(); event.returnValue = '' } }
   window.addEventListener('beforeunload', beforeUnload)
   onBeforeUnmount(() => { epoch++; observer?.stop(); clearTimeout(draftTimer); clearTimeout(readinessTimer); window.removeEventListener('beforeunload', beforeUnload) })
-  return { session, papers, paperInfo, allReady, checkingPapers, readinessError, checkReadiness, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, stage, runEvents, executorType, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
+  return { session, papers, paperInfo, allReady, checkingPapers, readinessError, checkReadiness, messages, loading, error, draft, dirty, draftError, savingDraft, messagePage, messagePages, moreBusy, messageError, run, runId, stage, runEvents, runHistory, loadRunHistory, executorType, connection, runError, active, uncertain, submitting, cancelling, exporting, open, refreshScope, loadMessages, saveDraft, send, cancel, exportChat, canLeave }
 }

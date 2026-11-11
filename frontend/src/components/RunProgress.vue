@@ -30,7 +30,7 @@ const labels = { running: '执行中', completed: '已完成', failed: '调用�
 .run-progress { padding: 12px 16px; border-top: 1px solid var(--line); background: #fafaff; font-size: 12px; color: var(--muted); }
 summary { cursor: pointer; color: var(--text); line-height: 1.8; overflow-wrap: anywhere; }
 .skill-selection { margin: 10px 0; }
-ol { list-style: none; padding: 0; margin: 10px 0 0; max-height: 200px; overflow-y: auto; }
+ol { list-style: none; padding: 0; margin: 10px 0 0; }
 li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 7px 0; line-height: 1.6; overflow-wrap: anywhere; }
 .tool-label { flex: 1; min-width: 90px; }
 .tool-label small { display: block; }

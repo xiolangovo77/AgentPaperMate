@@ -1,0 +1,72 @@
+/* A session owns the viewport; only its conversation and reference sidebar scroll. */
+.chat-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+.chat-shell .main { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.chat-shell .topbar { flex: 0 0 60px; position: static; }
+.chat-shell .content { display: flex; flex: 1; min-height: 0; padding: 16px 24px; overflow: hidden; }
+.chat-shell .footer { display: none; }
+.chat-shell .sidebar { min-height: 0; overflow-y: auto; }
+.chat-shell .chat-page { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.chat-shell .page-heading { align-items: center; flex-shrink: 0; margin-bottom: 12px; }
+.chat-shell .page-heading h1 { font-size: 20px; }
+.chat-shell .page-heading .eyebrow, .chat-shell .page-heading p { display: none; }
+.chat-shell .scope-panel { flex-shrink: 0; padding: 10px 14px; margin-bottom: 12px; }
+.chat-shell .scope-panel .panel-subtitle { display: none; }
+.chat-shell .scope-summary h2 { margin: 0; font-size: 13px; }
+.chat-shell .selected-preview { margin-top: 6px; max-height: 30px; overflow: hidden; }
+.chat-shell .selected-paper { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-shell .chat-layout { flex: 1; min-height: 0; align-items: stretch; }
+.chat-shell .chat-panel { min-height: 0; height: 100%; }
+.chat-shell .chat-header { flex-shrink: 0; padding: 10px 16px; }
+.chat-shell .chat-header h2 { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-shell .chat-message-viewport { position: relative; display: flex; flex: 1; min-height: 0; }
+.chat-shell .chat-messages { display: block; width: 100%; min-height: 0; max-height: none; padding: 20px; scroll-behavior: auto; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.chat-message-list { display: flex; flex-direction: column; gap: 18px; min-height: 100%; }
+.chat-message-list > * { flex-shrink: 0; }
+.chat-message-list .chat-empty { flex-grow: 1; }
+.chat-run { margin-left: 38px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.chat-run .run-state { border-top: 0; padding: 9px 12px; }
+.chat-run .notice { margin: 8px; }
+.chat-run .run-progress { padding: 9px 12px; }
+.jump-latest { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); box-shadow: 0 3px 14px #25304a18; z-index: 1; }
+.jump-latest:hover { transform: translateX(-50%); }
+.chat-shell .chat-composer { flex-shrink: 0; padding: 10px 14px; max-height: 45%; overflow-y: auto; }
+.chat-shell .execution-mode { gap: 8px; }
+.chat-shell .execution-mode select { padding: 5px 9px; }
+.chat-shell .execution-hint { margin: 4px 0 8px; line-height: 1.5; }
+.chat-shell .composer-box textarea { resize: none; }
+.chat-shell .chat-aside { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.chat-shell .chat-aside > * { flex-shrink: 0; }
+@media (max-width: 1050px) {
+  .chat-shell .chat-aside { display: none; }
+}
+@media (max-width: 720px) {
+  .chat-shell { display: flex; flex-direction: column; }
+  .chat-shell .sidebar { flex-shrink: 0; overflow: visible; padding: 6px 10px; }
+  .chat-shell .sidebar .brand { display: none; }
+  .chat-shell .main { flex: 1; height: auto; }
+  .chat-shell .topbar { flex-basis: 40px; height: 40px; }
+  .chat-shell .content { padding: 8px; }
+  .chat-shell .page-heading { gap: 8px; margin-bottom: 8px; }
+  .chat-shell .page-heading h1 { font-size: 17px; white-space: nowrap; }
+  .chat-shell .page-heading .toolbar { gap: 5px; flex-wrap: nowrap; }
+  .chat-shell .page-heading .btn { padding: 6px 8px; font-size: 11px; }
+  .chat-shell .scope-panel { padding: 7px 10px; margin-bottom: 8px; }
+  .chat-shell .selected-preview { display: none; }
+  .chat-shell .chat-header { padding: 8px 10px; }
+  .chat-shell .chat-messages { padding: 12px 10px; }
+  .chat-shell .chat-composer { padding: 8px; }
+  .chat-run { margin-left: 31px; }
+}
+@media (max-height: 650px) {
+  .chat-shell .scope-panel .selected-preview, .chat-shell .execution-hint, .chat-shell .quick-prompts { display: none; }
+  .chat-shell .chat-composer { max-height: 50%; }
+  .chat-shell .sidebar-bottom .workspace-note { display: none; }
+}
+@media (max-height: 500px) {
+  .chat-shell .topbar { display: none; }
+  .chat-shell .scope-panel { padding: 6px 10px; margin-bottom: 8px; }
+  .chat-shell .chat-header { padding: 6px 10px; }
+  .chat-shell .chat-composer { max-height: 65%; }
+  .chat-shell .composer-actions { display: none; }
+  .chat-shell .composer-box textarea { height: 42px; min-height: 42px; }
+}

@@ -201,11 +201,13 @@ test('restores Agent skill and tool progress on reload and stops unfinished tool
   addEvent('tool_failed', { callId: 'b', toolName: 'search_paper_chunks', elapsedMs: 20, errorCode: 'INVALID_ARGUMENT' })
   addEvent('tool_started', { callId: 'c', toolName: 'search_paper_chunks' })
   await page.goto(`/chat/${sessionId}`)
+  await expect(page.locator('.run-progress')).toHaveAttribute('open')
   await expect(page.locator('.skill-selection')).toHaveText('已选择技能：单篇论文总结')
   await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
   await expect(page.locator('.run-progress .failed')).toContainText('INVALID_ARGUMENT')
   await expect(page.locator('.run-progress .completed')).toContainText('12 ms')
   await page.reload()
+  await expect(page.locator('.run-progress')).toHaveAttribute('open')
   await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
   await expect(page.getByLabel('回答模式')).toHaveValue('agent')
   await page.screenshot({ path: 'test-results/agent-progress-desktop.png', fullPage: true })
@@ -217,6 +219,7 @@ test('restores Agent skill and tool progress on reload and stops unfinished tool
   await expect(page.locator('.run-progress')).toContainText('任务已结束，未收到工具结果')
   state.messages = [{ id: '701', sessionId, role: 'user', runId: '700', messageType: 'text', content: '总结论文', createTime: '2026-11-07T12:00:00' }]
   await page.reload()
+  await expect(page.locator('.run-progress')).toHaveAttribute('open')
   await expect(page.getByRole('list', { name: '工具执行记录' }).getByRole('listitem')).toHaveCount(3)
   await expect(page.locator('.run-progress .running')).toHaveCount(0)
   expect(state.unhandled).toEqual([])
@@ -241,6 +244,7 @@ test('sanitizes answers and uses verified citations for physical-page links', as
   const state = await fixtures(page)
   state.messages = [{ id: '701', sessionId, role: 'assistant', messageType: 'text', content: '## 研究结论\n<script>window.attacked=true</script><img src=x onerror="window.attacked=true">\n[危险链接](javascript:alert(1))\n\n```java\nSystem.out.println("paper");\n```', createTime: '2026-11-07T12:00:00' }]
   await page.goto(`/chat/${sessionId}`)
+  await page.locator('.citation-sources > summary').click()
   await expect(page.getByText('已校验的引用标题', { exact: true })).toBeVisible()
   expect(await page.evaluate(() => (window as unknown as { attacked?: boolean }).attacked)).toBeUndefined()
   await expect(page.locator('.markdown script, .markdown img, .markdown a[href^="javascript:"]')).toHaveCount(0)
@@ -405,4 +409,130 @@ test('processing job polls to completion and refreshes paper readiness', async (
   await expect(page.getByText('已写入 10 / 10 个片段')).toBeVisible({ timeout: 8000 })
   await expect(page.getByText('可用于问答', { exact: true })).toBeVisible()
   expect(details).toBeGreaterThanOrEqual(2)
+})
+
+
+test('long conversations keep the viewport fixed and disclose citations and run events in place', async ({ page }) => {
+  const state = await fixtures(page)
+  state.runStatus = 'completed'
+  state.messages = [
+    { id: '701', sessionId, role: 'user', runId: '700', messageType: 'text', content: '比较论文方法并列出证据', createTime: '2026-11-07T12:00:00' },
+    { id: '703', sessionId, role: 'assistant', runId: '700', messageType: 'text', content: Array.from({ length: 60 }, (_, i) => `第 ${i + 1} 段研究结论：方法与实验的详细比较。`).join('\n\n'), createTime: '2026-11-07T12:00:01' },
+  ]
+  state.runEvents = Array.from({ length: 30 }, (_, i) => ({ runId: '700', eventId: String(i + 1), type: 'tool_completed', timestamp: '', payload: { callId: String(i), toolName: 'search_paper_chunks', elapsedMs: 20 } }))
+  await page.route('**/api/messageCitation/list**', route => route.fulfill({ json: envelope(Array.from({ length: 25 }, (_, i) => ({ id: String(800 + i), messageId: '703', evidenceId: `E${i + 1}`, paperId, paperTitle: '大量引用测试论文', pageStart: 3, pageEnd: 4, quotedText: '用于验证长摘录不会自动展开。'.repeat(100) }))) }))
+  await page.goto(`/chat/${sessionId}`)
+  const sources = page.locator('.citation-sources'), progress = page.locator('.run-progress')
+  await expect(sources.locator(':scope > summary')).toContainText('1 篇论文 · 25 条引用')
+  await expect(sources).not.toHaveAttribute('open')
+  await expect(progress).toHaveAttribute('open')
+  await progress.locator(':scope > summary').click()
+  await expect(progress).not.toHaveAttribute('open')
+  await expect(page.locator('.chat-messages .chat-run')).toHaveCount(1)
+  expect(await page.locator('.chat-message-list').evaluate(element => Array.from(element.children).map(child => child.className))).toEqual(['message user', 'chat-run', 'message assistant'])
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 1366, height: 768 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+    await page.setViewportSize(viewport)
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight && document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const composer = await page.locator('.composer-box').boundingBox()
+    expect(composer).not.toBeNull()
+    expect(composer!.y + composer!.height).toBeLessThanOrEqual(viewport.height)
+    const scroller = page.locator('.chat-messages')
+    expect(await scroller.evaluate(element => element.scrollHeight > element.clientHeight && element.clientHeight > 0)).toBe(true)
+  }
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await sources.locator(':scope > summary').click()
+  await expect(sources.locator('.citation-card')).toHaveCount(25)
+  await expect(sources.locator('blockquote').first()).not.toBeVisible()
+  await sources.locator('.citation-excerpt > summary').first().click()
+  await expect(sources.locator('blockquote').first()).toBeVisible()
+  await expect(sources.locator('blockquote').nth(1)).not.toBeVisible()
+  await sources.locator(':scope > summary').click()
+  await page.locator('.chat-messages').evaluate(element => { element.scrollTop = 0 })
+  await expect(page.getByRole('button', { name: '回到最新消息' })).toBeVisible()
+  await progress.locator(':scope > summary').click()
+  await expect(progress.getByRole('listitem')).toHaveCount(30)
+  await expect.poll(() => page.locator('.chat-messages').evaluate(element => element.scrollTop)).toBeLessThan(200)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true)
+  await page.screenshot({ path: 'test-results/chat-inline-progress.png' })
+  await progress.locator(':scope > summary').click()
+  await page.getByRole('button', { name: '回到最新消息' }).click()
+  await expect(page.getByRole('button', { name: '回到最新消息' })).not.toBeVisible()
+  await page.screenshot({ path: 'test-results/chat-collapsed-sources.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: 'test-results/chat-fixed-mobile.png' })
+  expect(state.unhandled).toEqual([])
+})
+
+
+test('each chat turn restores its own skill and all tools and keeps them when the next run starts', async ({ page }) => {
+  test.setTimeout(45000)
+  const state = await fixtures(page)
+  const errors: string[] = [], historyCursors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  const message = (id: string, runId: string, role: string) => ({ id, sessionId, runId, role, messageType: 'text', content: `${runId} 的${role === 'user' ? '问题' : '回答'}`, createTime: '2026-11-07T12:00:00' })
+  state.messages = [message('691', '699', 'user'), message('692', '699', 'assistant'), message('701', '700', 'user')]
+  state.session.activeRunId = '700'
+  const event = (runId: string, eventId: number, type: string, payload: Record<string, unknown>): RunEvent => ({ runId, eventId: String(eventId), type, timestamp: '', payload })
+  const history = [event('699', 1, 'skill_selected', { skillId: 'paper-summary' })]
+  for (let i = 0; i < 52; i++) {
+    history.push(event('699', 2 + i * 2, 'tool_started', { callId: `call-${i}`, toolName: 'search_paper_chunks' }))
+    history.push(event('699', 3 + i * 2, 'tool_completed', { callId: `call-${i}`, toolName: 'search_paper_chunks', elapsedMs: i + 10 }))
+  }
+  state.runEvents = [event('700', 1, 'skill_selected', { skillId: 'paper-qa' }), event('700', 2, 'tool_started', { callId: 'call-0', toolName: 'get_paper_metadata' })]
+  const nextEvents = [event('800', 1, 'skill_selected', { skillId: 'paper-summary' }), event('800', 2, 'tool_started', { callId: 'call-0', toolName: 'get_paper_metadata' })]
+  const eventsFor = (id: string) => id === '699' ? history : id === '700' ? state.runEvents : nextEvents
+  let failHistory = true
+  await page.route('**/api/agentRun/get?**', route => {
+    const id = new URL(route.request().url()).searchParams.get('id')!
+    return route.fulfill({ json: envelope({ runId: id, sessionId, status: id === '699' ? 'completed' : id === '700' ? state.runStatus : 'running', eventSeq: eventsFor(id).at(-1)!.eventId, citations: [] }) })
+  })
+  await page.route('**/api/runEvent/list?**', route => {
+    const params = new URL(route.request().url()).searchParams, id = params.get('runId')!, after = params.get('afterEventSeq') || '0'
+    if (id === '699') {
+      historyCursors.push(after)
+      if (failHistory) return route.fulfill({ json: envelope(null, 50000, '历史事件读取暂时失败') })
+    }
+    return route.fulfill({ json: envelope(eventsFor(id).filter(item => BigInt(item.eventId) > BigInt(after)).slice(0, 100)) })
+  })
+  await page.route('**/api/agentRun/add', route => {
+    state.session.activeRunId = '800'
+    state.messages.push(message('801', '800', 'user'))
+    return route.fulfill({ json: envelope('800') })
+  })
+  await page.goto(`/chat/${sessionId}`)
+  const oldRun = page.locator('[data-run-id="699"]'), currentRun = page.locator('[data-run-id="700"]')
+  await expect(page.getByRole('heading', { name: '测试研究会话', exact: true })).toBeVisible()
+  await expect(page.locator('.chat-run')).toHaveCount(2)
+  await expect(oldRun).toContainText('历史事件读取暂时失败')
+  failHistory = false
+  await oldRun.getByRole('button', { name: '重试' }).click()
+  await expect(oldRun.locator('.skill-selection')).toHaveText('已选择技能：单篇论文总结')
+  await expect(oldRun.getByRole('listitem')).toHaveCount(52)
+  expect(historyCursors).toContain('100')
+  await expect(currentRun.locator('.skill-selection')).toHaveText('已选择技能：论文问答')
+  await expect(currentRun.getByRole('listitem')).toHaveCount(1)
+  await expect(currentRun.locator('li.running')).toContainText('读取论文信息')
+  state.runEvents.push(event('700', 3, 'tool_completed', { callId: 'call-0', toolName: 'get_paper_metadata', elapsedMs: 17 }), event('700', 4, 'tool_started', { callId: 'call-1', toolName: 'search_paper_chunks' }))
+  await expect(currentRun.getByRole('listitem')).toHaveCount(2, { timeout: 10000 })
+  await expect(currentRun.locator('li.completed')).toContainText('17 ms')
+  await expect(currentRun.locator('li.running')).toContainText('检索论文原文')
+  state.runEvents.push(event('700', 5, 'tool_completed', { callId: 'call-1', toolName: 'search_paper_chunks', elapsedMs: 23 }))
+  state.runStatus = 'completed'; state.session.activeRunId = null
+  state.messages.push(message('703', '700', 'assistant'))
+  await expect(page.getByRole('button', { name: '发送问题' })).toBeVisible({ timeout: 10000 })
+  await page.getByLabel('研究问题', { exact: true }).fill('继续研究')
+  await page.getByRole('button', { name: '发送问题' }).click()
+  await expect(page.locator('.chat-run')).toHaveCount(3)
+  await expect(currentRun.getByRole('listitem')).toHaveCount(2)
+  await expect(currentRun.locator('li.completed')).toHaveCount(2)
+  await expect(oldRun.getByRole('listitem')).toHaveCount(52)
+  await expect(page.locator('[data-run-id="800"] .skill-selection')).toHaveText('已选择技能：单篇论文总结')
+  await page.reload()
+  await expect(page.locator('.chat-run')).toHaveCount(3)
+  await expect(oldRun.getByRole('listitem')).toHaveCount(52)
+  await expect(currentRun.locator('.skill-selection')).toHaveText('已选择技能：论文问答')
+  await expect(currentRun.locator('li.completed')).toHaveCount(2)
+  await expect(page.locator('[data-run-id="800"] li.running')).toHaveCount(1)
+  expect(errors).toEqual([])
+  expect(state.unhandled).toEqual([])
 })

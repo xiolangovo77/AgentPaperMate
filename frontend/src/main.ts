@@ -9,6 +9,7 @@ import './styles/global.css'
 import './styles/app.css'
 import './styles/typography.css'
 import './styles/papers.css'
+import './styles/chat.css'
 
 const app = createApp(App)
 app.use(createPinia())

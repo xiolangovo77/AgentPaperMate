@@ -1,0 +1,115 @@
+/* A viewport-sized reading desk: the document and notes scroll independently. */
+.reading-shell { height: 100dvh; min-height: 0; overflow: hidden; }
+.reading-shell > .main { height: 100%; min-height: 0; overflow: hidden; }
+.reading-shell .content { display: flex; min-height: 0; max-width: none; padding: 0; overflow: hidden; }
+.reading-shell .footer { display: none; }
+.reading-shell .sidebar { background: #fafafd; overflow-y: auto; }
+.paper-workspace { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #eef0f4; }
+.reader-header { display: flex; align-items: center; gap: 15px; min-height: 82px; padding: 14px 24px; background: white; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+.reader-back { border-color: transparent; flex-shrink: 0; }
+.reader-title { min-width: 0; flex: 1; }
+.reader-eyebrow { display: flex; align-items: center; gap: 9px; color: var(--primary); font-size: 10px; letter-spacing: 1px; margin-bottom: 4px; }
+.reader-eyebrow span { color: var(--muted); letter-spacing: 0; }
+.reader-title h1 { font-size: 16px; font-weight: 600; line-height: 1.5; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reader-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.reader-actions .btn { font-size: 12px; min-height: 34px; padding: 7px 10px; }
+.reader-panel-toggle { border-color: transparent; background: transparent; color: var(--muted); }
+.reader-panel-toggle.selected { background: var(--soft); color: var(--primary); }
+.reader-chat-menu { position: relative; }
+.reader-chat-menu summary { list-style: none; cursor: pointer; }
+.reader-chat-menu summary::-webkit-details-marker { display: none; }
+.reader-chat-options { position: absolute; right: 0; top: calc(100% + 8px); min-width: 150px; padding: 6px; z-index: 8; border: 1px solid var(--line); border-radius: 10px; background: white; box-shadow: 0 12px 30px #18223020; }
+.reader-chat-options button { display: block; width: 100%; border: 0; background: transparent; text-align: left; padding: 10px 12px; border-radius: 6px; color: var(--text); font-size: 12px; }
+.reader-chat-options button:hover { background: var(--soft); color: var(--primary); }
+.reader-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; position: relative; }
+.reader-body.has-panel { grid-template-columns: minmax(0, 1fr) 340px; }
+.reader-document { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.reader-document > .notice, .paper-workspace > .notice { margin: 12px 20px; }
+.reader-document > .loading-state { flex: 1; }
+.reader-side-panel { min-height: 0; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: white; }
+.reader-panel-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; height: 57px; flex-shrink: 0; border-bottom: 1px solid var(--line); }
+.reader-panel-header .icon-btn { border: 0; color: var(--muted); }
+.reader-panel-tabs { display: flex; gap: 22px; height: 100%; }
+.reader-panel-tabs button { display: flex; align-items: center; gap: 6px; border: 0; border-bottom: 2px solid transparent; padding: 0 2px; background: transparent; color: var(--muted); font-size: 12px; }
+.reader-panel-tabs button[aria-selected=true] { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.reader-panel-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.reader-side-panel .note-editor { border: 0; border-radius: 0; box-shadow: none; padding: 22px 20px; }
+.reader-side-panel .note-editor .section-row { flex-direction: column; gap: 10px; margin-bottom: 24px; }
+.reader-side-panel .note-editor h2 { font-size: 14px; }
+.reader-side-panel .panel-subtitle { margin-top: 6px; line-height: 1.8; }
+.reader-side-panel .save-state { font-size: 10px; white-space: normal; }
+.reader-side-panel .note-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.reader-side-panel .note-editor .form-label { font-size: 12px; color: #4c586b; }
+.reader-side-panel .note-editor textarea { min-height: 116px !important; font-size: 12px; background: #fafbfe; resize: vertical; }
+.reader-side-panel .note-editor textarea:focus { background: white; }
+.reader-side-panel .editor-footer { gap: 16px; }
+.reader-side-panel .editor-footer > small { font-size: 10px; line-height: 1.8; }
+.reader-side-panel .editor-footer .toolbar { gap: 6px; }
+.reader-side-panel .editor-footer .btn { font-size: 11px; padding: 7px 9px; }
+.reader-details { padding: 24px 20px; }
+.reader-info-heading { font-size: 10px; letter-spacing: 1px; color: var(--muted); margin-bottom: 12px; }
+.reader-details h2 { font-size: 16px; line-height: 1.65; margin: 0 0 12px; }
+.reader-authors { font-size: 12px; color: var(--muted); line-height: 1.9; margin: 0 0 16px; }
+.reader-abstract { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.reader-abstract h3 { font-size: 13px; margin: 0 0 10px; }
+.reader-abstract p { font-size: 12px; line-height: 1.95; color: #667286; white-space: pre-wrap; }
+.reader-details .processing-panel { margin-top: 24px; padding: 14px; }
+.reader-details .processing-panel small { font-size: 10px; }
+
+.reader-document .pdf-viewer { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 0; border-radius: 0; background: #e9ecf1; }
+.reader-document .pdf-toolbar { justify-content: space-between; flex-wrap: nowrap; flex-shrink: 0; gap: 12px; height: 57px; padding: 10px 22px; border-bottom: 1px solid #e0e4eb; background: #fafbfd; color: #69758a; }
+.pdf-toolbar-label, .pdf-page-controls, .pdf-zoom-controls { display: flex; align-items: center; gap: 8px; }
+.pdf-toolbar-label { font-size: 11px; color: #8993a4; }
+.pdf-page-controls { white-space: nowrap; }
+.reader-document .pdf-toolbar input { width: 48px; padding: 3px 4px; height: 30px; border-radius: 6px; font-size: 12px; appearance: textfield; }
+.pdf-toolbar input::-webkit-inner-spin-button { appearance: none; }
+.pdf-toolbar .icon-btn { width: 29px; height: 29px; border-color: transparent; background: transparent; border-radius: 6px; }
+.pdf-toolbar .icon-btn:hover, .pdf-toolbar .icon-btn.selected { color: var(--primary); background: var(--soft); }
+.pdf-zoom-value { min-width: 40px; text-align: center; font-variant-numeric: tabular-nums; font-size: 11px; }
+.reader-document .pdf-canvas { flex: 1; min-height: 0; max-height: none; padding: 24px; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; overflow-anchor: none; }
+.pdf-sheet { position: relative; flex-shrink: 0; margin: 0 auto 24px; background: white; box-shadow: 0 2px 7px #22334a13, 0 10px 30px #22334a09; }
+.pdf-sheet:last-child { margin-bottom: 0; }
+.reader-document .pdf-sheet canvas { width: 100%; height: 100%; box-shadow: none; margin: 0; }
+.pdf-page-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #a0a8b6; font-size: 12px; pointer-events: none; }
+.pdf-page-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; font-size: 12px; color: #a34c4c; }
+.pdf-reading-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 22px; background: #f7f8fa; color: #8791a2; font-size: 10px; flex-shrink: 0; }
+.pdf-reading-progress { height: 2px; flex-shrink: 0; background: #e2e5ef; }
+.pdf-reading-progress > span { display: block; height: 100%; background: #8e90e7; transition: width .15s ease; }
+.reader-focus { position: fixed; inset: 0; z-index: 20; }
+.reader-focus .reader-panel-toggle { display: none; }
+
+/* PDF.js TextLayer positioning (matching the installed v5 renderer). */
+.hiddenCanvasElement { position: absolute; top: 0; left: 0; width: 0; height: 0; visibility: hidden; }
+.pdf-sheet .textLayer { position: absolute; inset: 0; overflow: clip; text-align: initial; line-height: 1; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText; --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.pdf-sheet .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.pdf-sheet .textLayer > :not(.markedContent), .pdf-sheet .textLayer .markedContent span:not(.markedContent) { z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height)); --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.pdf-sheet .textLayer .markedContent { display: contents; }
+.pdf-sheet .textLayer span[role=img] { user-select: none; cursor: default; }
+.pdf-sheet .textLayer ::selection { background: #7778ed50; }
+.pdf-sheet .textLayer br::selection { background: transparent; }
+
+@media (min-width: 1700px) { .reader-body.has-panel { grid-template-columns: minmax(0, 1fr) 380px; } }
+@media (max-width: 1200px) { .reader-body.has-panel { grid-template-columns: minmax(0, 1fr) 310px; } .pdf-toolbar-label { display: none; } .reader-header { gap: 10px; padding: 12px 16px; } }
+@media (max-width: 900px) {
+  .reader-body.has-panel { grid-template-columns: minmax(0, 1fr); }
+  .reader-side-panel { position: absolute; right: 0; top: 0; bottom: 0; width: min(360px, 100%); z-index: 6; box-shadow: -12px 0 35px #26365418; }
+  .reader-actions .reader-panel-toggle span { display: none; }
+}
+@media (max-width: 720px) {
+  .reading-shell { display: flex; flex-direction: column; }
+  .reading-shell > .sidebar { display: none; }
+  .reading-shell > .main { flex: 1; height: auto; }
+  .reader-header { min-height: 70px; padding: 10px 12px; gap: 8px; }
+  .reader-title h1 { font-size: 13px; }
+  .reader-eyebrow { font-size: 9px; }
+  .reader-actions { gap: 3px; }
+  .reader-actions .btn { padding: 7px; }
+  .reader-chat-menu summary span, .reader-chat-menu summary > svg:last-child { display: none; }
+  .reader-document .pdf-toolbar { height: auto; min-height: 51px; padding: 8px 12px; gap: 6px; }
+  .pdf-page-controls, .pdf-zoom-controls { gap: 3px; }
+  .pdf-page-controls { font-size: 11px; }
+  .pdf-zoom-value { min-width: 35px; }
+  .reader-document .pdf-toolbar input { width: 35px; }
+  .pdf-toolbar .icon-btn { width: 26px; height: 28px; }
+  .pdf-reading-footer { padding: 8px 12px; font-size: 9px; }
+}

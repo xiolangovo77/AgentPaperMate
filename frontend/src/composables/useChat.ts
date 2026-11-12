@@ -22,12 +22,13 @@ export function useChat() {
   const loading = ref(false), error = ref(''), draft = ref(''), savedDraft = ref(''), draftError = ref(''), savingDraft = ref(false)
   const messagePage = ref(1), messagePages = ref(1), moreBusy = ref(false), messageError = ref('')
   const run = ref<Run | null>(null), stage = ref(''), connection = ref('stopped'), runError = ref(''), runId = ref('')
-  const executorType = ref<ExecutorType>('rag'), runEvents = ref<RunEvent[]>([])
+  const executorType = ref<ExecutorType>('agent'), runEvents = ref<RunEvent[]>([])
   const runHistory = ref<Record<string, RunHistory>>({})
   const submitting = ref(false), cancelling = ref(false), exporting = ref(false)
   const active = computed(() => !!runId.value && (!run.value || !terminal(run.value.status)))
   const uncertain = computed(() => session.value ? recovery.pending[session.value.id] : undefined)
   const dirty = computed(() => !!session.value && draft.value !== savedDraft.value)
+  let pendingSessionId = ''
   let epoch = 0, draftTimer: ReturnType<typeof setTimeout> | undefined, draftFlight: Promise<boolean> | undefined
   let observer: ReturnType<typeof observeRun> | undefined, lastTerminal = ''
   let scopeEpoch = 0, refreshMessagesAfterFlight = false
@@ -137,11 +138,12 @@ export function useChat() {
   async function open(id?: string) {
     observer?.stop(); observer = undefined; clearTimeout(draftTimer)
     const token = ++epoch
+    pendingSessionId = ''
     refreshMessagesAfterFlight = false; scopeEpoch++
     clearTimeout(readinessTimer); readinessEpoch++; paperInfo.value = {}; readinessError.value = ''; checkingPapers.value = false
     session.value = null; messages.value = []; papers.value = []; error.value = ''; messageError.value = ''; draftError.value = ''
     draft.value = ''; savedDraft.value = ''; run.value = null; runId.value = ''; runError.value = ''; stage.value = ''; lastTerminal = ''; moreBusy.value = false
-    runEvents.value = []; runHistory.value = {}; executorType.value = (id && recovery.pending[id]?.executorType) || 'rag'
+    runEvents.value = []; runHistory.value = {}; executorType.value = (id && recovery.pending[id]?.executorType) || 'agent'
     if (!id) { loading.value = false; return }
     loading.value = true
     try {
@@ -185,14 +187,31 @@ export function useChat() {
   watch(draft, () => { clearTimeout(draftTimer); if (dirty.value) draftTimer = setTimeout(() => void saveDraft(), 700) })
 
   async function send(retry?: Message) {
-    if (!session.value || submitting.value || active.value) return
-    const id = session.value.id, token = epoch, question = uncertain.value?.question || retry?.content || draft.value.trim(), selectedExecutor = executorType.value
+    if (submitting.value || active.value) return
+    const token = epoch, question = uncertain.value?.question || retry?.content || draft.value.trim(), selectedExecutor = executorType.value
     error.value = ''
     if (!uncertain.value && (!question || !papers.value.length)) return
     if (new TextEncoder().encode(question).length > 16000) { error.value = '问题不能超过 16000 个 UTF-8 字节，请缩短内容。'; return }
     submitting.value = true
-    let createdId = ''
+    let createdId = '', id = session.value?.id || pendingSessionId
     try {
+      if (!session.value) {
+        await checkReadiness()
+        if (token !== epoch) return
+        if (!allReady.value) throw new Error(readinessError.value || '请先选择已就绪的论文。')
+        const paperIds = papers.value.map(item => item.paperId)
+        if (!id) {
+          id = await sessionApi.add(question.slice(0, 60) || '新研究会话', question)
+          if (token !== epoch) return
+          pendingSessionId = id
+        }
+        const initial = await readScope(id)
+        if (token !== epoch) return
+        await sessionApi.updateScope(id, paperIds, initial.session.scopeVersion)
+        const initialized = await readScope(id)
+        if (token !== epoch) return
+        session.value = initialized.session; papers.value = initialized.papers
+      }
       if (!recovery.pending[id]) {
         const latest = await readScope(id)
         if (token !== epoch) return

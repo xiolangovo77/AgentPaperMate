@@ -4,8 +4,8 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { Plus, ChevronDown, MessagesSquare, Send, Pencil, Trash2, Download, FileText, SlidersHorizontal, BookOpen, Square, LoaderCircle, Paperclip, CircleHelp, MoreHorizontal } from 'lucide-vue-next'
 import { runApi, sessionApi } from '../api'
 import { messageOf } from '../api/request'
-import type { Message, Session } from '../types/api'
-import { dateTime, validId } from '../utils/format'
+import type { Message } from '../types/api'
+import { validId } from '../utils/format'
 import { stageLabels, terminal } from '../utils/runObserver'
 import { executorLabels } from '../utils/runProgress'
 import { useChat } from '../composables/useChat'
@@ -16,11 +16,14 @@ import ScopeManager from '../components/ScopeManager.vue'
 import MessageBubble from '../components/MessageBubble.vue'
 import RunProgress from '../components/RunProgress.vue'
 import UploadPaper from '../components/UploadPaper.vue'
+import { useSessionNavigationStore } from '../stores/sessionNavigation'
 const route = useRoute(), router = useRouter(), chat = useChat()
 const { session, papers, messages, loading, error, draft, draftError, messagePage, messagePages, moreBusy, messageError, run, stage, connection, runError, active, uncertain, submitting, cancelling, exporting } = chat
 const { paperInfo, allReady, checkingPapers, readinessError } = chat
 const { executorType, runEvents, runId, runHistory } = chat
-const sessions = ref<Session[]>([]), listPage = ref(1), listPages = ref(1), listBusy = ref(false), listError = ref(''), listQuery = ref('')
+const navigation = useSessionNavigationStore()
+const entryLoading = ref(false), entryError = ref('')
+let entryEpoch = 0, routeEpoch = 0
 const showMaterials = ref(false), showUpload = ref(false), showModeHelp = ref(false)
 const composerElement = ref<HTMLTextAreaElement>()
 function resizeComposer() {
@@ -30,8 +33,8 @@ function resizeComposer() {
   element.style.height = `${Math.min(element.scrollHeight, Math.min(200, window.innerHeight * .25))}px`
 }
 watch([draft, composerElement], () => resizeComposer(), { flush: 'post' })
-const switcher = ref(false), showScope = ref(false), modal = ref<'create' | 'rename' | 'delete' | null>(null), modalValue = ref(''), modalError = ref(''), modalBusy = ref(false)
-const messagesElement = ref<HTMLElement>(), messageListElement = ref<HTMLElement>(), switcherElement = ref<HTMLElement>()
+const showScope = ref(false), modal = ref<'rename' | 'delete' | null>(null), modalValue = ref(''), modalError = ref(''), modalBusy = ref(false)
+const messagesElement = ref<HTMLElement>(), messageListElement = ref<HTMLElement>()
 const menuElement = ref<HTMLDetailsElement>()
 function closeMenu() { if (menuElement.value) menuElement.value.open = false }
 function exportConversation() { closeMenu(); void chat.exportChat() }
@@ -70,7 +73,16 @@ function scrollToLatest() {
   followingLatest.value = true
   messagesElement.value?.scrollTo({ top: messagesElement.value.scrollHeight, behavior: 'instant' })
 }
-async function send() { followingLatest.value = true; await chat.send() }
+async function send() {
+  followingLatest.value = true
+  const wasNew = isNew.value
+  await chat.send()
+  if (wasNew && session.value) { await router.replace(`/chat/${session.value.id}`); await navigation.refresh() }
+}
+function selectDraftPapers(ids: string[]) {
+  papers.value = ids.map(id => ({ id, paperId: id, sessionId: '' }))
+  void chat.checkReadiness()
+}
 async function loadOlderMessages() {
   const element = messagesElement.value
   if (!element) return
@@ -93,31 +105,21 @@ const prompts = computed(() => executorType.value === 'agent'
   ? [...(papers.value.length === 1 ? ['请总结这篇论文的研究背景、问题、方法、创新、实验与局限'] : []), ...(papers.value.length >= 2 && papers.value.length <= 5 ? ['请比较这些论文的方法、实验结果与局限'] : []), '请分析这些论文的研究方向，提出可验证的假设与实验方案', '论文的核心研究问题与创新点是什么？']
   : ['总结核心研究问题与创新点', '对比方法与实验结论', '有哪些局限和值得继续研究的问题？'])
 const selectedId = computed(() => typeof route.params.id === 'string' && route.params.id ? route.params.id : undefined)
+const isNew = computed(() => !selectedId.value && typeof route.query.new === 'string')
 const modeHint = computed(() => executorType.value === 'agent'
   ? '按问题自动选择问答、总结、多论文比较或研究分析技能。总结支持单篇论文，比较支持 2～5 篇；研究方向建议需进一步验证。'
   : '检索所选论文的相关证据后生成回答。')
-const canSend = computed(() => !!session.value && !!draft.value.trim() && allReady.value && !active.value && !submitting.value && !uncertain.value)
-let listEpoch = 0, searchTimer: ReturnType<typeof setTimeout> | undefined
-async function loadSessions(more = false) {
-  const token = ++listEpoch, page = more ? listPage.value + 1 : 1
-  listBusy.value = true; listError.value = ''
-  try {
-    const result = await sessionApi.list(page, listQuery.value)
-    if (token !== listEpoch) return
-    sessions.value = more ? [...sessions.value, ...result.records] : result.records; listPage.value = page; listPages.value = Number(result.pages)
-  } catch (e) { if (token === listEpoch) listError.value = messageOf(e) }
-  finally { if (token === listEpoch) listBusy.value = false }
+const canSend = computed(() => (!!session.value || isNew.value) && !!draft.value.trim() && allReady.value && !active.value && !submitting.value && !uncertain.value)
+function begin(kind: 'create' | 'rename' | 'delete') {
+  closeMenu()
+  if (kind === 'create') { navigation.startNew(typeof route.query.question === 'string' ? route.query.question : ''); return }
+  modal.value = kind; modalError.value = ''; modalValue.value = kind === 'rename' ? session.value?.name || '' : ''
 }
-function begin(kind: 'create' | 'rename' | 'delete') { closeMenu(); modal.value = kind; modalError.value = ''; modalValue.value = kind === 'rename' ? session.value?.name || '' : '' }
 async function confirm() {
   if (modalBusy.value) return
   modalBusy.value = true; modalError.value = ''
   try {
-    if (modal.value === 'create') {
-      if (!await chat.canLeave()) return
-      const id = await sessionApi.add(modalValue.value.trim() || '新研究会话', typeof route.query.question === 'string' ? route.query.question : '')
-      modal.value = null; await router.push(`/chat/${id}`)
-    } else if (session.value && modal.value === 'rename') {
+    if (session.value && modal.value === 'rename') {
       if (!modalValue.value.trim()) throw new Error('聊天室名称不能为空。')
       await sessionApi.update(session.value.id, { name: modalValue.value.trim() }); session.value.name = modalValue.value.trim(); modal.value = null
     } else if (session.value && modal.value === 'delete') {
@@ -130,10 +132,9 @@ async function confirm() {
       if (!await chat.saveDraft()) throw new Error('草稿保存失败，请先重试保存后再删除。')
       await sessionApi.delete(id); modal.value = null; await router.replace('/chat')
     }
-    await loadSessions()
+    await navigation.refresh()
   } catch (e) { modalError.value = messageOf(e) } finally { modalBusy.value = false }
 }
-async function selectSession(id: string) { switcher.value = false; await router.push(`/chat/${id}`) }
 function keydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (canSend.value) void send() }
 }
@@ -143,29 +144,45 @@ function retry(message: Message) {
   if (window.confirm(`将使用${executorLabels[executorType.value]}和聊天室当前资料范围重新执行这个问题，是否继续？`)) { followingLatest.value = true; void chat.send(message) }
 }
 function outside(event: MouseEvent) {
-  if (switcher.value && !switcherElement.value?.contains(event.target as Node)) switcher.value = false
   if (!menuElement.value?.contains(event.target as Node)) closeMenu()
 }
-function escape(event: KeyboardEvent) { if (event.key === 'Escape') { switcher.value = false; closeMenu() } }
+function escape(event: KeyboardEvent) { if (event.key === 'Escape') closeMenu() }
+async function openLatest() {
+  const token = ++entryEpoch
+  entryLoading.value = true; entryError.value = ''
+  try {
+    // Resolve the entry route independently of a filtered sidebar search.
+    const result = await sessionApi.list(1)
+    if (token !== entryEpoch || selectedId.value) return
+    const latest = result.records[0]
+    if (latest) await router.replace({ path: `/chat/${latest.id}`, query: route.query })
+  } catch (e) { if (token === entryEpoch) entryError.value = messageOf(e) }
+  finally { if (token === entryEpoch) entryLoading.value = false }
+}
 async function openRoute() {
+  const token = ++routeEpoch, requestedId = selectedId.value
+  entryEpoch++; entryLoading.value = false; entryError.value = ''
   showScope.value = false; showMaterials.value = false; showModeHelp.value = false
   closeMenu()
   followingLatest.value = true
-  if (selectedId.value && !validId(selectedId.value)) { await chat.open(); error.value = '聊天室 ID 无效。'; return }
-  await chat.open(selectedId.value)
+  if (requestedId && requestedId === session.value?.id) return
+  if (requestedId && !validId(requestedId)) { await chat.open(); if (token === routeEpoch) error.value = '聊天室 ID 无效。'; return }
+  await chat.open(requestedId)
+  if (token !== routeEpoch) return
+  if (!requestedId) { if (isNew.value) { draft.value = typeof route.query.question === 'string' ? route.query.question : ''; return }; await openLatest(); return }
   await nextTick(); scrollToLatest()
 }
-watch(selectedId, () => void openRoute(), { immediate: true })
-watch(listQuery, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => void loadSessions(), 300) })
+watch([selectedId, () => route.query.new], () => void openRoute(), { immediate: true })
+watch(session, value => { if (value) navigation.syncSession(value) }, { deep: true })
 watch(() => messages.value.at(-1)?.id, async () => { await nextTick(); if (followingLatest.value) scrollToLatest() })
 watch(modal, async value => { if (value) { await nextTick(); document.getElementById('session-name')?.focus() } })
-onMounted(() => { window.addEventListener('resize', resizeComposer); window.addEventListener('focus', refreshPaperState); void loadSessions(); document.addEventListener('click', outside); document.addEventListener('keydown', escape) })
-onBeforeUnmount(() => { window.removeEventListener('resize', resizeComposer); window.removeEventListener('focus', refreshPaperState); messageResizeObserver?.disconnect(); listEpoch++; clearTimeout(searchTimer); document.removeEventListener('click', outside); document.removeEventListener('keydown', escape) })
+onMounted(() => { window.addEventListener('resize', resizeComposer); window.addEventListener('focus', refreshPaperState); document.addEventListener('click', outside); document.addEventListener('keydown', escape) })
+onBeforeUnmount(() => { window.removeEventListener('resize', resizeComposer); window.removeEventListener('focus', refreshPaperState); messageResizeObserver?.disconnect(); routeEpoch++; entryEpoch++; document.removeEventListener('click', outside); document.removeEventListener('keydown', escape) })
 onBeforeRouteLeave(to => to.meta.public ? true : chat.canLeave())
-onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) return chat.canLeave() })
+onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id || to.query.new !== from.query.new) return chat.canLeave() })
 </script>
 <template>
-  <div class="chat-page" :class="{ 'has-session': session }">
+  <div class="chat-page" :class="{ 'has-session': session || isNew }">
     <div v-if="recycledPapers.length" class="notice" role="status">
       <div>该会话关联的部分论文已移入回收站，当前会话仍可使用这些论文。建议新建会话并重新选择论文，或前往回收站恢复。
         <details><summary>查看已回收论文（{{ recycledPapers.length }}）</summary><ul><li v-for="paper in recycledPapers" :key="paper!.id">{{ paperTitle(paper!) }}</li></ul></details>
@@ -173,21 +190,11 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
       </div>
     </div>
     <header class="conversation-header">
-      <div class="conversation-title"><h1 :title="session?.name">{{ session?.name || '研究会话' }}</h1>
-        <button v-if="session" class="text-link material-trigger" @click="showMaterials = true"><BookOpen :size="14" />{{ papers.length }} 篇论文<ChevronDown :size="12" /></button>
+      <div class="conversation-title"><h1 :title="session?.name">{{ session?.name || (isNew ? '新会话' : '研究会话') }}</h1>
+        <button v-if="session || isNew" class="text-link material-trigger" @click="showMaterials = true"><BookOpen :size="14" />{{ papers.length }} 篇论文<ChevronDown :size="12" /></button>
       </div>
       <div class="toolbar">
-        <div ref="switcherElement" class="chat-session-menu">
-          <button class="btn" :aria-expanded="switcher" @click="switcher = !switcher"><MessagesSquare :size="15" />切换会话<ChevronDown :size="14" /></button>
-          <div v-if="switcher" class="session-switcher">
-            <input v-model="listQuery" class="field" placeholder="搜索历史会话" aria-label="搜索历史会话" />
-            <Feedback :error="listError"><button class="text-link" @click="loadSessions()">重试</button></Feedback>
-            <div class="session-options"><button v-for="item in sessions" :key="item.id" class="session-option" :class="{ active: session?.id === item.id }" @click="selectSession(item.id)"><MessagesSquare :size="16" /><div><b>{{ item.name }}</b><small>{{ dateTime(item.lastMessageTime || item.createTime) }}</small></div></button><div v-if="!sessions.length && !listBusy && !listError" class="empty-state">没有匹配的会话。</div></div>
-            <Feedback :loading="listBusy" /><button v-if="listPage < listPages" class="text-link" :disabled="listBusy" @click="loadSessions(true)">加载更多会话</button>
-          </div>
-        </div>
-        <button v-if="session" class="btn small scope-trigger" @click="showScope = true"><SlidersHorizontal :size="15" />调整资料</button>
-        <button class="btn new-session" title="新建聊天室" aria-label="新建聊天室" :disabled="submitting" @click="begin('create')"><Plus :size="17" /><span>新建会话</span></button>
+        <button v-if="session || isNew" class="btn small scope-trigger" @click="showScope = true"><SlidersHorizontal :size="15" />调整资料</button>
         <details v-if="session" ref="menuElement" class="conversation-menu">
           <summary class="icon-btn" aria-label="会话操作" title="会话操作"><MoreHorizontal :size="19" /></summary>
           <div class="conversation-menu-items">
@@ -199,12 +206,12 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
       </div>
     </header>
     <Feedback :loading="loading" :error="error"><button v-if="!submitting" class="text-link" @click="session ? chat.refreshScope() : openRoute()">刷新</button></Feedback>
-    <template v-if="!loading && !session && !selectedId">
-      <section class="panel no-session chat-empty"><MessagesSquare :size="40" /><h3>为一个研究问题，留出一间聊天室</h3><p>添加已有论文，围绕同一个主题持续讨论。每个会话独立保存资料范围、消息与草稿。</p><button class="btn primary section-space" @click="begin('create')"><Plus :size="15" />创建聊天室</button><p v-if="route.query.question" class="section-space">待讨论：{{ route.query.question }}</p></section>
-      <div class="section-row"><h2>历史研究会话</h2></div><Feedback :loading="listBusy" :error="listError"><button class="text-link" @click="loadSessions()">重试</button></Feedback>
-      <div class="paper-grid"><button v-for="item in sessions" :key="item.id" class="paper-card session-card" @click="selectSession(item.id)"><span class="session-icon"><MessagesSquare :size="20" /></span><div><h3 class="paper-title">{{ item.name }}</h3><p class="paper-meta">{{ dateTime(item.lastMessageTime || item.createTime) }}</p></div></button></div><button v-if="listPage < listPages" class="btn section-space" :disabled="listBusy" @click="loadSessions(true)">加载更多</button>
-    </template>
-    <template v-if="session && !loading">
+    <Feedback v-if="!selectedId && !isNew" :loading="entryLoading" :error="entryError"><button class="text-link" @click="openLatest">重新加载最近会话</button></Feedback>
+    <div v-if="typeof route.query.question === 'string' && route.query.question" class="chat-pending-question"><Pencil :size="16" /><div><strong>待讨论的问题</strong><p>{{ route.query.question }}</p><button class="text-link" @click="begin('create')">用这个问题新建会话</button></div></div>
+    <section v-if="!loading && !session && !isNew && !selectedId && !entryLoading && !entryError" class="chat-welcome">
+      <MessagesSquare :size="34" /><h2>开始你的第一段研究讨论</h2><p>新建会话，添加论文，围绕原文展开讨论。资料、消息与草稿会随会话一起保存。</p><button class="btn primary" @click="begin('create')"><Plus :size="16" />创建聊天室</button>
+    </section>
+    <template v-if="(session || isNew) && !loading">
       <p v-if="papers.length && !allReady" class="notice" role="status">{{ checkingPapers ? '正在检查论文索引…' : readinessError || '资料中有论文尚未就绪或索引不兼容，暂不能提问。' }}<button class="text-link" @click="chat.checkReadiness()">重新检查</button></p><div class="chat-layout">
         <section class="panel chat-panel">
           <div class="chat-message-viewport">
@@ -244,7 +251,7 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
                   <button class="icon-btn" title="上传 PDF 论文" aria-label="上传 PDF 论文" @click="showUpload = true"><Paperclip :size="18" /></button>
                   <label for="executor-type" class="sr-only">回答模式</label>
                   <select id="executor-type" v-model="executorType" class="select" :disabled="active || submitting || !!uncertain" :title="modeHint">
-                    <option value="rag">RAG 检索问答</option><option value="agent">Agent 自主问答</option>
+                    <option value="agent">Agent 自主问答</option><option value="rag">RAG 检索问答</option>
                   </select>
                   <button class="icon-btn mode-help-trigger" title="回答模式说明" aria-label="回答模式说明" @click="showModeHelp = true"><CircleHelp :size="16" /></button>
                 </div>
@@ -259,8 +266,8 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
 
       </div>
     </template>
-    <Modal v-if="showMaterials && session" title="当前资料" drawer @close="showMaterials = false">
-      <p class="muted">{{ papers.length }} 篇论文 · 资料范围版本 {{ session.scopeVersion }}</p>
+    <Modal v-if="showMaterials && (session || isNew)" title="当前资料" drawer @close="showMaterials = false">
+      <p class="muted">{{ papers.length }} 篇论文 · 资料范围版本 {{ session?.scopeVersion ?? '尚未保存' }}</p>
       <div class="material-list"><RouterLink v-for="paper in papers" :key="paper.id" :to="`/library/${paper.paperId}`" class="material-paper"><FileText :size="18" /><span>{{ paperInfo[paper.paperId] ? paperTitle(paperInfo[paper.paperId]!) : `论文 ${paper.paperId}` }}</span></RouterLink></div>
       <p v-if="!papers.length" class="muted">尚未添加论文。</p>
       <button class="btn primary" @click="showMaterials = false; showScope = true"><SlidersHorizontal :size="15" />调整资料</button>
@@ -268,7 +275,7 @@ onBeforeRouteUpdate(async (to, from) => { if (to.params.id !== from.params.id) r
     </Modal>
     <Modal v-if="showModeHelp" title="回答模式说明" @close="showModeHelp = false"><p>{{ modeHint }}</p><p v-if="executorType === 'agent' && papers.length > 1">需要结构化总结时，请先将资料范围调整为一篇论文。</p></Modal>
     <UploadPaper v-if="showUpload" for-chat @close="showUpload = false" />
-    <ScopeManager v-if="showScope && session" :session-id="session.id"  @close="showScope = false" @changed="chat.refreshScope()" />
-    <Modal v-if="modal" :title="modal === 'create' ? '新建聊天室' : modal === 'rename' ? '重命名聊天室' : '删除聊天室'" :busy="modalBusy" @close="modal = null"><form @submit.prevent="confirm"><Feedback :error="modalError" /><template v-if="modal !== 'delete'"><label class="form-label" for="session-name">会话名称</label><input id="session-name" v-model="modalValue" class="field rename-input" maxlength="200" :required="modal === 'rename'" placeholder="例如：Agent 记忆机制研究" :disabled="modalBusy" /><p class="scope-warning">{{ modal === 'create' ? '创建后添加论文，开始独立的研究讨论。' : '修改名称不会影响消息或论文范围。' }}</p></template><p v-else>将删除「{{ session?.name }}」及其聊天记录。若存在活动任务，会先取消并确认任务结束。论文和阅读笔记保留，此操作不可撤销。</p><div class="dialog-actions"><button type="button" class="btn" :disabled="modalBusy" @click="modal = null">取消</button><button class="btn" :class="modal === 'delete' ? 'danger' : 'primary'" :disabled="modalBusy">{{ modalBusy ? '正在处理…' : modal === 'delete' ? '确认删除' : modal === 'create' ? '创建聊天室' : '保存名称' }}</button></div></form></Modal>
+    <ScopeManager v-if="showScope && (session || isNew)" :session-id="session?.id" :initial-paper-ids="papers.map(item => item.paperId)" @selected="selectDraftPapers"  @close="showScope = false" @changed="chat.refreshScope()" />
+    <Modal v-if="modal" :title="modal === 'rename' ? '重命名聊天室' : '删除聊天室'" :busy="modalBusy" @close="modal = null"><form @submit.prevent="confirm"><Feedback :error="modalError" /><template v-if="modal !== 'delete'"><label class="form-label" for="session-name">会话名称</label><input id="session-name" v-model="modalValue" class="field rename-input" maxlength="200" :required="modal === 'rename'" placeholder="例如：Agent 记忆机制研究" :disabled="modalBusy" /><p class="scope-warning">修改名称不会影响消息或论文范围。</p></template><p v-else>将删除「{{ session?.name }}」及其聊天记录。若存在活动任务，会先取消并确认任务结束。论文和阅读笔记保留，此操作不可撤销。</p><div class="dialog-actions"><button type="button" class="btn" :disabled="modalBusy" @click="modal = null">取消</button><button class="btn" :class="modal === 'delete' ? 'danger' : 'primary'" :disabled="modalBusy">{{ modalBusy ? '正在处理…' : modal === 'delete' ? '确认删除' : '保存名称' }}</button></div></form></Modal>
   </div>
 </template>

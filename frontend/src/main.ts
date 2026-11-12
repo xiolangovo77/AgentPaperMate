@@ -10,6 +10,8 @@ import './styles/app.css'
 import './styles/typography.css'
 import './styles/papers.css'
 import './styles/chat.css'
+import './styles/reader.css'
+import './styles/navigation.css'
 
 const app = createApp(App)
 app.use(createPinia())

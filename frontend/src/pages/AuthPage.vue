@@ -39,3 +39,21 @@ async function submit() {
     </form></section>
   </main>
 </template>
+<style scoped>
+.auth-page { --primary: #4d759b; --primary2: #80a7c8; --soft: #edf3f9; --muted: #788a9d; --text: #283e53; }
+.auth-intro { background: linear-gradient(145deg, #f0f5fa, #f7f9fc); }
+.auth-intro .brand-sub { color: #8b9dae; }
+.auth-story h1 { color: #2d4b68; }
+.auth-story > p { color: #74899d; }
+.auth-feature { color: #607b96; }
+.auth-feature svg { color: #6e94b5; }
+.auth-intro > small { color: #98a8b8; }
+.auth-form h2 { color: #283e53; }
+.auth-form .form-label { color: #647b90; }
+.auth-form .field { border-color: #e1e8ef; color: #354c63; }
+.auth-form .field::placeholder { color: #9baab9; }
+.auth-form .field:focus { border-color: #91b1cd; box-shadow: 0 0 0 3px #6e94b514; }
+.auth-page .auth-submit { background: #4d759b; border-color: #4d759b; box-shadow: 0 5px 12px #4d759b1f; }
+.auth-page .auth-submit:hover { background: #3e6488; border-color: #3e6488; }
+.auth-page :is(button, a, input):focus-visible { outline-color: #6e94b5; }
+</style>

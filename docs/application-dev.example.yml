@@ -1,0 +1,33 @@
+# 复制到 src/main/resources/application-dev.yml 后按实际环境修改。
+# 不含真实凭据。${...} 由运行后端的环境变量提供。
+# 主配置默认启用论文处理与 RAG，启动前需要准备相应外部服务。
+apm:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: "jdbc:mysql://127.0.0.1:3306/apm?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&characterEncoding=UTF-8"
+    username: "${APM_MYSQL_USERNAME}"
+    password: "${APM_MYSQL_PASSWORD}"
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      password: "${APM_REDIS_PASSWORD:}"
+      ttl: 3600
+  elasticsearch:
+    url: http://127.0.0.1:9200
+    username: "${APM_ES_USERNAME:}"
+    password: "${APM_ES_PASSWORD:}"
+  grobid:
+    url: http://127.0.0.1:8070
+  dashscope:
+    # 填原生 API 主机地址，不追加 /compatible-mode/v1。
+    base-url: "${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com}"
+    api-key: "${DASHSCOPE_API_KEY}"
+
+cos:
+  client:
+    host: "${COS_HOST}"
+    secretId: "${COS_SECRET_ID}"
+    secretKey: "${COS_SECRET_KEY}"
+    region: "${COS_REGION}"
+    bucket: "${COS_BUCKET}"

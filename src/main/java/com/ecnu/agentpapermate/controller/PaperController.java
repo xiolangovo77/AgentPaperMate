@@ -51,6 +51,14 @@ public class PaperController {
      */
     private final PaperFileService paperFileService;
 
+    @PostMapping("/retry")
+    public BaseResponse<PaperAddVO> retry(
+            @RequestBody com.ecnu.agentpapermate.entity.dto.paper.PaperRetryRequest body,
+            HttpServletRequest request) {
+        Long userId = appUserService.getLoginUser(request).getId();
+        return ResultUtils.success(paperService.retryPaper(body.getId(), body.getJobId(), userId));
+    }
+
     @PostMapping("/recycle")
     public BaseResponse<Boolean> recycle(@RequestBody com.ecnu.agentpapermate.entity.dto.paper.PaperRecycleRequest body,
                                         HttpServletRequest request) {

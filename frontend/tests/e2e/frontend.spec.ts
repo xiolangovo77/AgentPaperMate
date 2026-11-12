@@ -408,6 +408,60 @@ test('PDF business errors remain visible and retry renders real pages', async ({
   await page.screenshot({ path: 'test-results/pdf-mobile.png', fullPage: true })
 })
 
+test('failed paper retries without uploading and follows the new job to readiness', async ({ page }) => {
+  await fixtures(page)
+  let jobId = '900', status = 'failed', calls = 0
+  await page.route('**/api/paper/get?**', route => route.fulfill({ json: envelope({ id: paperId, title: '失败论文', status: status === 'completed' ? 'ready' : status === 'failed' ? 'failed' : 'uploaded', canAsk: status === 'completed', jobId, isRecycled: 0, createTime: '', updateTime: '' }) }))
+  await page.route('**/api/paperProcessingJob/get?**', route => {
+    expect(new URL(route.request().url()).searchParams.get('id')).toBe(jobId)
+    return route.fulfill({ json: envelope({ id: jobId, paperId, status, currentStep: status === 'failed' ? 'parsing' : 'queued', errorMessage: status === 'failed' ? '解析失败' : null, retryCount: 0, totalChunks: 0, updateTime: '' }) })
+  })
+  await page.route('**/api/paper/retry', async route => {
+    calls++
+    expect(route.request().postDataJSON()).toEqual({ id: paperId, jobId: '900' })
+    await new Promise(resolve => setTimeout(resolve, 300))
+    if (calls === 1) return route.fulfill({ json: envelope(null, 50000, '暂时无法提交') })
+    jobId = '901'; status = 'pending'
+    return route.fulfill({ json: envelope({ paperId, jobId, status: 'uploaded' }) })
+  })
+  await page.goto(`/library/${paperId}?tab=notes`)
+  await page.getByRole('button', { name: '重新处理', exact: true }).click()
+  await expect(page.getByRole('button', { name: '正在提交…', exact: true })).toBeDisabled()
+  await expect(page.getByRole('alert')).toContainText('暂时无法提交')
+  await page.getByRole('button', { name: '重新处理', exact: true }).click()
+  await expect(page.getByText('等待处理', { exact: true })).toBeVisible()
+  await expect(page.locator('.processing-panel')).not.toContainText('解析失败')
+  status = 'completed'
+  await expect(page.getByText('可用于问答', { exact: true })).toBeVisible({ timeout: 8000 })
+  expect(calls).toBe(2)
+})
+
+test('duplicate upload can restart a failed job and update its receipt', async ({ page }) => {
+  const state = await fixtures(page)
+  let retried = false, uploads = 0
+  await page.route('**/api/common/upload/paper', route => { uploads++; return route.fulfill({ json: envelope('https://private.invalid/paper.pdf') }) })
+  await page.route('**/api/paper/add', route => route.fulfill({ json: envelope({ paperId, jobId: '900', status: 'failed', alreadyExists: true }) }))
+  await page.route('**/api/paperProcessingJob/get?**', route => route.fulfill({ json: envelope({ id: retried ? '901' : '900', paperId, status: retried ? 'pending' : 'failed', currentStep: retried ? 'queued' : 'parsing', retryCount: 0, updateTime: '' }) }))
+  await page.route('**/api/paper/retry', route => { retried = true; return route.fulfill({ json: envelope({ paperId, jobId: '901', status: 'uploaded', alreadyExists: false }) }) })
+  await page.goto('/library?upload=1')
+  await page.locator('input[type=file]').setInputFiles({ name: 'paper.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.7\nfixture') })
+  await page.getByRole('button', { name: '上传并开始处理', exact: true }).click()
+  await expect(page.getByText('该论文已存在，未重复创建')).toBeVisible()
+  await page.getByRole('button', { name: '重新处理', exact: true }).click()
+  await expect(page.locator('.receipt')).toContainText('901')
+  await expect(page.getByText('等待处理', { exact: true })).toBeVisible()
+  expect(uploads).toBe(1); expect(state.unhandled).toEqual([])
+})
+
+test('recycled failed paper hides retry action', async ({ page }) => {
+  await fixtures(page)
+  await page.route('**/api/paper/get?**', route => route.fulfill({ json: envelope({ id: paperId, title: '回收论文', status: 'failed', canAsk: false, jobId: '900', isRecycled: 1, createTime: '', updateTime: '' }) }))
+  await page.route('**/api/paperProcessingJob/get?**', route => route.fulfill({ json: envelope({ id: '900', paperId, status: 'failed', errorMessage: '解析失败', retryCount: 3, updateTime: '' }) }))
+  await page.goto(`/library/${paperId}?tab=notes`)
+  await expect(page.getByRole('region', { name: '论文处理状态' }).getByText('处理失败', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: '重新处理', exact: true })).toHaveCount(0)
+})
+
 test('processing job polls to completion and refreshes paper readiness', async ({ page }) => {
   await fixtures(page)
   let jobs = 0, details = 0

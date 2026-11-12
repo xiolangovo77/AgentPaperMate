@@ -18,6 +18,9 @@ import com.ecnu.agentpapermate.entity.vo.paper.PaperSummaryVO;
  * @since 2026-11-03
  */
 public interface PaperService extends IService<Paper> {
+    /** 复用原文件重新处理失败任务，重复请求返回最新任务。 */
+    PaperAddVO retryPaper(Long id, Long jobId, Long userId);
+
     /**
      * 回收或恢复当前用户的论文，保留已有会话关联及论文数据。
      *

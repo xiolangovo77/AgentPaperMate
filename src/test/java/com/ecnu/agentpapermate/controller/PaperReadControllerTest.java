@@ -46,8 +46,11 @@ class PaperReadControllerTest {
     }
 
     @Test
-    void allFiveEndpointsRequireLoginBeforeCallingBusinessServices() throws Exception {
+    void endpointsRequireLoginBeforeCallingBusinessServices() throws Exception {
         when(users.getLoginUser(any())).thenThrow(new BusinessException(ErrorCode.NOT_LOGIN_ERROR));
+        mvc.perform(post("/paper/retry").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":100,\"jobId\":200}"))
+                .andExpect(jsonPath("$.code").value(40100));
         mvc.perform(post("/paper/list/page").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(jsonPath("$.code").value(40100));
         mvc.perform(get("/paper/get").param("id", "100")).andExpect(jsonPath("$.code").value(40100));
@@ -57,6 +60,19 @@ class PaperReadControllerTest {
                         .content("{\"sessionId\":100,\"paperIds\":[],\"scopeVersion\":1}"))
                 .andExpect(jsonPath("$.code").value(40100));
         verifyNoInteractions(papers, files, jobs, scopes);
+    }
+
+    @Test
+    void retryBindsIdsAndUsesAuthenticatedOwner() throws Exception {
+        var receipt = new com.ecnu.agentpapermate.entity.vo.paper.PaperAddVO();
+        receipt.setPaperId(100L); receipt.setJobId(201L); receipt.setStatus("uploaded");
+        when(papers.retryPaper(100L, 200L, 42L)).thenReturn(receipt);
+        mvc.perform(post("/paper/retry").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"id\":\"100\",\"jobId\":\"200\",\"userId\":99}"))
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data.jobId").value(201))
+                .andExpect(jsonPath("$.data.status").value("uploaded"));
+        verify(papers).retryPaper(100L, 200L, 42L);
     }
 
     @Test

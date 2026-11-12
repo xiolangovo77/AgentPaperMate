@@ -265,6 +265,77 @@ class PaperServiceTest {
         return paper;
     }
 
+    @Test
+    void retryCreatesNewVersionAndFreshBudgetWithoutUploadingAgain() {
+        Paper paper = existingPaper(); paper.setStatus("failed");
+        PaperProcessingJob failed = existingJob(); failed.setStatus("failed"); failed.setIndexVersion(3);
+        when(papers.selectOne(any())).thenReturn(paper);
+        when(jobs.selectOne(any())).thenReturn(failed);
+        when(papers.update(isNull(), any(com.baomidou.mybatisplus.core.conditions.Wrapper.class))).thenReturn(1);
+        var result = service.retryPaper(100L, 200L, 42L);
+        assertEquals("uploaded", result.getStatus());
+        var captured = ArgumentCaptor.forClass(PaperProcessingJob.class);
+        verify(jobs).insert(captured.capture());
+        var next = captured.getValue();
+        assertEquals(4, next.getIndexVersion()); assertEquals("pending", next.getStatus());
+        assertEquals(0, next.getRetryCount()); assertEquals(config.getMaxRetries(), next.getMaxRetries());
+        assertNull(next.getLeaseToken()); assertNull(next.getErrorMessage());
+        var query = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(papers).selectOne(query.capture());
+        assertTrue(query.getValue().getSqlSegment().contains("FOR UPDATE"));
+        assertTrue(query.getValue().getParamNameValuePairs().containsValue(42L));
+        verify(transactions).commit(txStatus);
+        verifyNoInteractions(cos);
+    }
+
+    @Test
+    void staleRetryReturnsLatestEvenIfNewAttemptAlreadyFailed() {
+        when(papers.selectOne(any())).thenReturn(existingPaper());
+        PaperProcessingJob latest = existingJob(); latest.setId(201L); latest.setStatus("failed");
+        when(jobs.selectOne(any())).thenReturn(latest);
+        assertEquals(201L, service.retryPaper(100L, 200L, 42L).getJobId());
+        verify(jobs, never()).insert(any(PaperProcessingJob.class));
+        verifyNoInteractions(cos);
+    }
+
+    @Test
+    void retryRejectsInvalidIdsForeignAndRecycledPapers() {
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, null));
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, null, 42L));
+        assertThrows(BusinessException.class, () -> service.retryPaper(0L, 200L, 42L));
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, 99L));
+        Paper paper = existingPaper(); paper.setIsRecycled((byte) 1);
+        when(papers.selectOne(any())).thenReturn(paper);
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, 42L));
+        verifyNoInteractions(jobs, cos);
+    }
+
+    @Test
+    void retryRejectsMissingOrNonfailedTask() {
+        when(papers.selectOne(any())).thenReturn(existingPaper());
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, 42L));
+        for (String status : List.of("pending", "running", "completed")) {
+            PaperProcessingJob job = existingJob(); job.setStatus(status);
+            when(jobs.selectOne(any())).thenReturn(job);
+            assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, 42L));
+        }
+        verify(jobs, never()).insert(any(PaperProcessingJob.class));
+    }
+
+    @Test
+    void retryPreservesActiveIndexAndRollsBackOnInsertFailure() {
+        Paper paper = existingPaper(); paper.setActiveIndexVersion(1); paper.setActiveIndexAttempt("old");
+        PaperProcessingJob failed = existingJob(); failed.setStatus("failed"); failed.setIndexVersion(2);
+        when(papers.selectOne(any())).thenReturn(paper);
+        when(jobs.selectOne(any())).thenReturn(failed);
+        assertEquals("ready", service.retryPaper(100L, 200L, 42L).getStatus());
+        assertEquals(1, paper.getActiveIndexVersion()); assertEquals("old", paper.getActiveIndexAttempt());
+        verify(papers, never()).update(any(), any(com.baomidou.mybatisplus.core.conditions.Wrapper.class));
+        when(jobs.insert(any(PaperProcessingJob.class))).thenReturn(0);
+        assertThrows(BusinessException.class, () -> service.retryPaper(100L, 200L, 42L));
+        verify(transactions).rollback(txStatus);
+    }
+
     private PaperProcessingJob existingJob() {
         PaperProcessingJob job = new PaperProcessingJob();
         job.setId(200L);

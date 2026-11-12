@@ -1,5 +1,7 @@
 # PDF 数据库任务调度
 
+手动重新处理：`POST /paper/retry`，JSON 请求体为 `{ "id": "论文ID", "jobId": "失败任务ID" }`，登录身份从会话获取。仅允许本人未回收论文的最新失败任务创建下一索引版本，复用原 PDF，使用当前处理配置和全新自动重试预算。论文行锁串行化并发请求；旧任务 ID 的重复请求返回最新任务，不再次创建。返回结构与 `/paper/add` 相同。保留旧任务记录及已有有效索引，无需数据库迁移。重复导入同内容 PDF 返回最新任务；前端详情页和上传结果中的失败状态提供“重新处理”，提交后跟踪新任务。
+
 任务获取与调度已接通完整入库流程，见 [GROBID 入库说明](./paper-ingestion.md)。上传保存事务创建 `paper`、`paper_processing_job`，不再创建 Outbox；不需要 RabbitMQ。新数据库使用 `sql/create_table.sql`，已有库沿用重试和租约字段，新增有效尝试字段的 SQL 见入库说明，旧 Outbox 表保留历史数据即可。
 
 调度器先取得本实例 Semaphore 名额，再在 READ COMMITTED 短事务内使用 `FOR UPDATE SKIP LOCKED` 领取到期 `pending` 任务，提交后使用虚拟线程调用 `PaperJobProcessor.process`。领取范围排除逻辑删除的论文和任务；每次领取生成新令牌。异常和过期租约使用条件更新回队，重试预算耗尽进入 `failed`。

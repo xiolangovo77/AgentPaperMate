@@ -75,6 +75,39 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     private final TransactionTemplate transactionTemplate;
 
     @Override
+    public PaperAddVO retryPaper(Long id, Long jobId, Long userId) {
+        ThrowUtils.throwIf(userId == null, ErrorCode.NOT_LOGIN_ERROR);
+        ThrowUtils.throwIf(id == null || id <= 0 || jobId == null || jobId <= 0,
+                ErrorCode.PARAMS_ERROR, "论文或任务ID不合法");
+        return transactionTemplate.execute(tx -> {
+            // 同一论文的手动重试串行执行，锁持有到新任务及论文状态一起提交。
+            Paper paper = paperMapper.selectOne(new QueryWrapper<Paper>()
+                    .eq("id", id).eq("user_id", userId).last("FOR UPDATE"));
+            ThrowUtils.throwIf(paper == null, ErrorCode.NOT_FOUND_ERROR, "论文不存在或无权访问");
+            ThrowUtils.throwIf(Byte.valueOf((byte) 1).equals(paper.getIsRecycled()),
+                    ErrorCode.CONFLICT_ERROR, "该论文已在回收站，请恢复后重新处理");
+            PaperProcessingJob latest = jobMapper.selectOne(new QueryWrapper<PaperProcessingJob>()
+                    .eq("paper_id", id).orderByDesc("index_version", "id").last("LIMIT 1"));
+            ThrowUtils.throwIf(latest == null, ErrorCode.CONFLICT_ERROR, "论文处理任务缺失");
+            // 旧页面或网络重发只返回当前任务，不消耗新一轮处理预算。
+            if (!Objects.equals(latest.getId(), jobId)) {
+                return buildPaperAddVO(paper, latest);
+            }
+            ThrowUtils.throwIf(!"failed".equals(latest.getStatus()),
+                    ErrorCode.CONFLICT_ERROR, "只有处理失败的任务可以重新处理");
+            PaperProcessingJob next = buildJob(id);
+            next.setIndexVersion(Math.addExact(latest.getIndexVersion(), 1));
+            requireInserted(jobMapper.insert(next));
+            if (paper.getActiveIndexVersion() == null) {
+                requireInserted(paperMapper.update(null, new UpdateWrapper<Paper>()
+                        .eq("id", id).set("status", "uploaded").setSql("update_time = CURRENT_TIMESTAMP(3)")));
+                paper.setStatus("uploaded");
+            }
+            return buildPaperAddVO(paper, next);
+        });
+    }
+
+    @Override
     public boolean setRecycled(Long id, Byte isRecycled, Long userId) {
         //1、校验目标状态，只允许回收或恢复
         ThrowUtils.throwIf(isRecycled == null || (isRecycled != 0 && isRecycled != 1),
@@ -218,7 +251,7 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     }
 
     /**
-     * 根据用户 ID 和文件哈希查找已有论文及其首次处理任务，不存在时返回 null。
+     * 根据用户 ID 和文件哈希查找已有论文及其最新处理任务，不存在时返回 null。
      */
     private PaperAddVO findExisting(Long userId, String hash) {
         //1、按用户和文件哈希查找已有论文，未找到时交由上传流程创建
@@ -230,9 +263,9 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         //2、已回收的同内容论文需先恢复，禁止通过重复上传绕过回收状态
         ThrowUtils.throwIf(Byte.valueOf((byte) 1).equals(paper.getIsRecycled()), ErrorCode.CONFLICT_ERROR,
                 "该论文已在回收站，请恢复后使用");
-        //3、读取已有论文的首次处理任务，检查论文与任务记录是否完整
+        //3、读取最新任务，重复导入也能跟踪手动重试后的进度
         PaperProcessingJob job = jobMapper.selectOne(new QueryWrapper<PaperProcessingJob>()
-                .eq("paper_id", paper.getId()).eq("index_version", 1));
+                .eq("paper_id", paper.getId()).orderByDesc("index_version", "id").last("LIMIT 1"));
         ThrowUtils.throwIf(job == null, ErrorCode.OPERATION_ERROR, "论文已存在但处理任务缺失，请联系管理员");
 
         //4、返回已有论文和任务，并标记重复上传，供前端展示提示

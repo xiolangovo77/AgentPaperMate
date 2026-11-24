@@ -34,6 +34,8 @@ public class RagProperties {
     private int maxConcurrentRuns = 4;
     /** 固定 RAG 每路检索的候选数量，同时作为所有检索请求（含 Agent）的 topK 上限。 */
     private int retrievalTopK = 20;
+    /** 固定 RAG 在召回前将问题改写为独立检索句。 */
+    private boolean queryRewriteEnabled = true;
     /** 融合后允许提供给模型的证据数量。 */
     private int maxEvidence = 8;
     /** 证据文本总预算，使用 cl100k_base 估算。 */

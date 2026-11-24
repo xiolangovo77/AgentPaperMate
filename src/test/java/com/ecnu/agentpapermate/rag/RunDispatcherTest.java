@@ -26,10 +26,12 @@ class RunDispatcherTest {
     private final RunStore store = mock(RunStore.class);
     private final RunQueries queries = mock(RunQueries.class);
     private final RagRetriever retriever = mock(RagRetriever.class);
+    /** 执行或模拟检索前的查询改写。 */
+    private final RagQueryRewriter rewriter = mock(RagQueryRewriter.class);
     private final RagAnswerGenerator generator = mock(RagAnswerGenerator.class);
     private final RagJson json = new RagJson(new ObjectMapper());
     private final RunDispatcher dispatcher = new RunDispatcher(store, json, List.of(
-            new FixedRagExecutor(store, queries, retriever, generator, new RagProperties())));
+            new FixedRagExecutor(store, queries, rewriter, retriever, generator, new RagProperties())));
     private final AgentRun run = new AgentRun();
 
     @BeforeEach
@@ -41,6 +43,7 @@ class RunDispatcherTest {
         run.setPapersSnapshot(json.write(List.of(RunStoreTest.scope())));
         run.setDeadline(LocalDateTime.now().plusSeconds(180));
         when(store.retrievalStarted(1L)).thenReturn(true);
+        when(rewriter.rewrite(any(), anyList())).thenReturn("独立检索问题");
         when(store.retrieved(eq(1L), any())).thenReturn(true);
         when(store.answerGenerationStarted(1L)).thenReturn(true);
     }
@@ -102,7 +105,9 @@ class RunDispatcherTest {
         var context = ArgumentCaptor.forClass(AgentRunContext.class);
         order.verify(generator).generate(context.capture(), eq(retrieval.evidence()), eq(List.of()));
         order.verify(store).complete(1L, RunStoreTest.answer());
-        verify(retriever).retrieve(any(), same(context.getValue().getRetrievalContext()), eq(run.getDeadline()));
+        verify(retriever).retrieve(argThat(request -> "独立检索问题".equals(request.query())),
+                same(context.getValue().getRetrievalContext()), eq(run.getDeadline()));
+        assertEquals("问题", context.getValue().getUserQuery());
         verify(queries).recentMessages(same(context.getValue()));
         assertEquals(retrieval.retrievedChunkIds(), context.getValue().getEvidenceRegistry().getRetrievedChunkIds());
     }

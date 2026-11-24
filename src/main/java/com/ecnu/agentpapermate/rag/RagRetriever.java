@@ -6,6 +6,8 @@ import com.ecnu.agentpapermate.rag.model.RetrievalCandidates;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
+import com.alibaba.cloud.ai.model.RerankModel;
+import com.alibaba.cloud.ai.model.RerankRequest;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.service.PaperService;
@@ -18,6 +20,7 @@ import com.knuddels.jtokkit.api.EncodingType;
 import org.elasticsearch.client.Request;
 import org.elasticsearch.client.RestClient;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.document.Document;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
@@ -37,6 +40,8 @@ public class RagRetriever {
      * 默认使用 query 模式的问题向量模型，与论文入库的 document 模型实例分开。
      */
     private final EmbeddingModel embedding;
+    /** 为已核验的候选原文排序；未配置模型时使用融合顺序。 */
+    private final Optional<RerankModel> rerankModel;
     /**
      * 检索配置，提供候选数量、证据数量及原文 Token 预算。
      */
@@ -62,10 +67,12 @@ public class RagRetriever {
 
     public RagRetriever(@Qualifier("paperElasticsearchClient") RestClient client,
                         @Qualifier("ragQueryEmbeddingModel") EmbeddingModel embedding, RagProperties properties,
-                        PaperProcessingProperties processing, RagJson json, RagCalls calls, PaperService papers) {
+                        PaperProcessingProperties processing, RagJson json, RagCalls calls, PaperService papers,
+                        Optional<RerankModel> rerankModel) {
         this.client = client; this.embedding = embedding; this.properties = properties;
         this.processing = processing; this.json = json; this.calls = calls;
         this.papers = papers;
+        this.rerankModel = rerankModel;
     }
 
     /** deadline 由后端 AgentRunContext 提供，与检索范围分开传递。 */
@@ -116,7 +123,35 @@ public class RagRetriever {
         });
 
         //3、按排序名次融合而非直接相加不同量纲的分数，统一去重并限制证据预算
-        return fuse(context.userId(), scopes, bm25, knn);
+        var candidates = collectCandidates(context.userId(), scopes, bm25, knn);
+        var ranked = candidates;
+        if (rerankModel.isPresent() && candidates.size() > 1) {
+            ranked = calls.call(deadline, () -> {
+                verifyAccess(context.userId(), candidates.stream().map(Candidate::scope).distinct().toList());
+                return rerank(rerankModel.get(), request.query(), candidates);
+            });
+        }
+        return selectEvidence(candidates, ranked);
+    }
+
+    private List<Candidate> rerank(RerankModel model, String query, List<Candidate> candidates) {
+        //1、将候选原文与片段标识绑定，供重排后还原来源
+        Map<String, Candidate> byId = new HashMap<>();
+        List<Document> documents = new ArrayList<>();
+        for (Candidate candidate : candidates) {
+            byId.put(candidate.chunkId(), candidate);
+            documents.add(new Document(candidate.chunkId(), candidate.quote(), Map.of()));
+        }
+        //2、取得模型排名，拒绝空结果和重复或未知的片段标识
+        var results = model.call(new RerankRequest(query, documents)).getResults();
+        if (results.isEmpty()) throw new IllegalStateException("重排未返回候选片段");
+        List<Candidate> ranked = new ArrayList<>();
+        for (var result : results) {
+            Candidate candidate = byId.remove(result.getOutput().getId());
+            if (candidate == null) throw new IllegalStateException("重排返回了重复或未知片段");
+            ranked.add(candidate);
+        }
+        return ranked;
     }
 
     private List<PaperScope> resolveScopes(RetrievalRequest request, RetrievalContext context) {
@@ -257,6 +292,12 @@ public class RagRetriever {
     public record BrowseResult(Map<String, Object> data, RetrievalCandidates candidates) { }
 
     RetrievalCandidates fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
+        var candidates = collectCandidates(userId, scopes, responses);
+        return selectEvidence(candidates, candidates);
+    }
+
+    private List<Candidate> collectCandidates(Long userId, List<PaperScope> scopes, JsonNode... responses) {
+        //1、按各路召回名次累加融合分数并去除重复命中
         Map<String, JsonNode> hits = new HashMap<>();
         Map<String, Double> scores = new HashMap<>();
         for (JsonNode response : responses) {
@@ -280,7 +321,7 @@ public class RagRetriever {
                     && item.esIndexName().equals(hit.path("_index").asText())
                     && item.indexVersion() == meta.path("indexVersion").asInt()
                     && item.attemptToken().equals(meta.path("attemptToken").asText())).findFirst().orElse(null);
-            //4、再次核验返回来源，拒绝越权、错误版本或伪造页码的响应
+            //2、再次核验返回来源，拒绝越权、错误版本或伪造页码的响应
             if (scope == null || !userId.toString().equals(meta.path("ownerId").asText())
                     || !scope.embeddingModel().equals(meta.path("embeddingModel").asText())
                     || !scope.embeddingVersion().equals(meta.path("embeddingVersion").asText())) {
@@ -292,18 +333,22 @@ public class RagRetriever {
                     || start < 1 || end < start) continue;
             String chunkId = meta.path("chunkId").asText();
             String content = hit.at("/_source/content").asText();
-            //5、现有分块以标题和章节作为前缀，引用仅保存其后的提取正文
+            //3、现有分块以标题和章节作为前缀，引用仅保存其后的提取正文
             int boundary = content.indexOf("\n\n");
             String quote = (boundary >= 0 ? content.substring(boundary + 2) : content).strip();
             if (quote.isBlank() || chunkId.isBlank() || chunkId.length() > 128) continue;
             if (chunkIds.add(chunkId)) candidates.add(new Candidate(scope, chunkId, start, end, quote));
         }
 
-        //6、先收集完整候选，再做原文去重、Token 和数量筛选，避免 break 截短候选快照
+        return candidates;
+    }
+
+    private RetrievalCandidates selectEvidence(List<Candidate> candidates, List<Candidate> ranked) {
+        //1、按最终排名去重，并限制证据的条数和 Token 总量
         List<EvidenceCandidate> result = new ArrayList<>();
         int tokens = 0;
         Set<String> contents = new HashSet<>();
-        for (Candidate candidate : candidates) {
+        for (Candidate candidate : ranked) {
             PaperScope scope = candidate.scope();
             int cost = encoding.countTokens(candidate.quote());
             if (tokens + cost > properties.getEvidenceTokenBudget()
@@ -312,6 +357,7 @@ public class RagRetriever {
             tokens += cost;
             if (result.size() >= properties.getMaxEvidence()) break;
         }
+        //2、记录完整候选顺序和预算内的原文证据
         return new RetrievalCandidates(candidates.stream().map(Candidate::chunkId).toList(), result);
     }
 

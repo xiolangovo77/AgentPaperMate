@@ -22,7 +22,11 @@ spring:
         # 由 RagConfiguration 创建带执行预算的 ragChatModel，关闭自动配置避免重复 Bean。
         enabled: false
       rerank:
-        enabled: false
+        enabled: true
+        options:
+          model: qwen3.7-text-rerank
+          top-n: 5
+          return-documents: false
     vectorstore:
       elasticsearch:
         initialize-schema: true
@@ -117,6 +121,7 @@ rag:
   poll-interval-ms: 1000
   max-concurrent-runs: 4
   retrieval-top-k: 20
+  query-rewrite-enabled: true
   max-evidence: 8
   evidence-token-budget: 6000
   max-papers: 50

@@ -43,7 +43,7 @@ public class PaperTools {
                         .description("在当前 Run 论文和索引快照内检索原文，返回可引用证据。省略 requestedPaperIds 使用完整范围；topK 不得超过服务端上限。")
                         .inputSchema("""
                                 {"type":"object","properties":{
-                                  "query":{"type":"string","minLength":1,"maxLength":16000},
+                                  "query":{"type":"string","minLength":1,"maxLength":16000,"description":"结合当前问题与对话历史，把本次查找目标改写成独立检索句。补全有明确指代的对象，保留术语、实体、数字和否定条件；原句清楚时可直接使用。"},
                                   "requestedPaperIds":{"type":"array","minItems":1,"maxItems":100,"uniqueItems":true,
                                     "items":{"type":"string","pattern":"^[1-9][0-9]*$"}},
                                   "topK":{"type":"integer","minimum":1,"maximum":%d}},

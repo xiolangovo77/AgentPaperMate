@@ -126,6 +126,8 @@ public class RunStore {
             run.setSkillId(skill.id()); run.setSkillVersion(skill.version()); run.setSkillContentHash(skill.contentHash());
             // 复用 JSON 配置列保存完整技能快照，不增加数据库字段，不接受客户端覆盖。
             modelConfig.put("skillSnapshot", skill);
+        } else {
+            modelConfig.put("queryRewriteEnabled", properties.isQueryRewriteEnabled());
         }
         run.setModelConfig(json.write(modelConfig));
         run.setEventSeq(0L); run.setInputTokens(0L); run.setOutputTokens(0L);

@@ -103,7 +103,10 @@ class ToolCallingHttpTest {
     void nativeToolsAreExecutedOnceAndBothIdsAreReturnedToSecondModelCall() {
         var result = probe.verify(context);
         assertEquals(2, requests.size(), "SDK 不得自动执行工具或隐式续轮");
-        assertEquals(2, requests.getFirst().at("/parameters/tools").size());
+        var definitions = requests.getFirst().at("/parameters/tools");
+        assertEquals(com.ecnu.agentpapermate.agent.skill.SkillRegistry.RUN_TOOLS.size(), definitions.size());
+        assertEquals("search_paper_chunks", definitions.at("/1/function/name").asText());
+        assertTrue(definitions.at("/1/function/parameters/properties/query/description").asText().contains("独立检索句"));
         assertEquals(1024, requests.getFirst().at("/parameters/max_tokens").asInt());
         assertEquals("get_paper_metadata", requests.getFirst().at("/parameters/tools/0/function/name").asText());
         assertEquals("object", requests.getFirst().at("/parameters/tools/0/function/parameters/type").asText());

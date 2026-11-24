@@ -7,9 +7,12 @@ import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.ecnu.agentpapermate.service.PaperService;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.rag.model.ConversationMessage;
-import com.ecnu.agentpapermate.rag.model.RetrievalContext;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
+import com.alibaba.cloud.ai.document.DocumentWithScore;
+import com.alibaba.cloud.ai.model.RerankModel;
+import com.alibaba.cloud.ai.model.RerankRequest;
+import com.alibaba.cloud.ai.model.RerankResponse;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import com.ecnu.agentpapermate.config.rag.RagConfiguration;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
@@ -44,9 +47,17 @@ class RagHttpTest {
     private RestClient es;
     private RagRetriever retriever;
     private RagAnswerGenerator generator;
+    /** 执行或模拟检索前的查询改写。 */
+    private RagQueryRewriter rewriter;
     private AgentRunContext runContext;
     private RunStore store;
     private volatile boolean timedOut;
+    /** 控制检索替身是否返回多个候选以触发重排。 */
+    private volatile boolean multipleHits;
+    /** 指定本地聊天模型替身返回的正文。 */
+    private volatile String chatOutput = "{\"answer\":\"答案[E1]\",\"evidenceIds\":[\"E1\"]}";
+    /** 模拟候选原文的相关性排序。 */
+    private final RerankModel reranker = mock(RerankModel.class);
 
     @BeforeEach
     void setUp() throws Exception {
@@ -61,10 +72,12 @@ class RagHttpTest {
                 response = Map.of("request_id", "test", "output", Map.of("embeddings", List.of(
                         Map.of("text_index", 0, "embedding", List.of(0.1, 0.2, 0.3)))), "usage", Map.of("total_tokens", 3));
             } else if (path.equals("/paper_test/_search")) {
-                response = Map.of("timed_out", timedOut, "_shards", Map.of("failed", 0), "hits", Map.of("hits", List.of(hit("chunk1", "原文", true))));
+                var hits = multipleHits ? List.of(hit("chunk1", "原文", true), hit("chunk2", "相关段落", true))
+                        : List.of(hit("chunk1", "原文", true));
+                response = Map.of("timed_out", timedOut, "_shards", Map.of("failed", 0), "hits", Map.of("hits", hits));
             } else if (path.equals("/api/v1/services/aigc/multimodal-generation/generation")) {
                 response = Map.of("request_id", "test", "output", Map.of("choices", List.of(Map.of("finish_reason", "stop",
-                        "message", Map.of("role", "assistant", "content", "{\"answer\":\"答案[E1]\",\"evidenceIds\":[\"E1\"]}")))),
+                        "message", Map.of("role", "assistant", "content", chatOutput)))),
                         "usage", Map.of("input_tokens", 10, "output_tokens", 20, "total_tokens", 30));
             } else {
                 exchange.sendResponseHeaders(404, -1); exchange.close(); return;
@@ -88,11 +101,13 @@ class RagHttpTest {
         es = RestClient.builder(HttpHost.create(url)).build();
         Clock clock = Clock.system(ZoneId.of("Asia/Shanghai"));
         var calls = new RagCalls(executor, properties, clock);
-        retriever = new RagRetriever(es, embedding, properties, processing, json, calls, mock(PaperService.class));
         store = mock(RunStore.class);
         when(store.modelCallStarted(40L)).thenReturn(true);
-        generator = new RagAnswerGenerator(new RunChatCaller(
-                new RagConfiguration().ragChatModel(properties, connection), calls, store), json);
+        var caller = new RunChatCaller(new RagConfiguration().ragChatModel(properties, connection), calls, store);
+        retriever = new RagRetriever(es, embedding, properties, processing, json, calls, mock(PaperService.class),
+                Optional.of(reranker));
+        generator = new RagAnswerGenerator(caller, json);
+        rewriter = new RagQueryRewriter(caller, json);
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
@@ -102,10 +117,6 @@ class RagHttpTest {
 
     private RetrievalRequest retrievalRequest() {
         return new RetrievalRequest(run.getUserQuery(), null, properties.getRetrievalTopK());
-    }
-
-    private RetrievalContext retrievalContext() {
-        return new RetrievalContext(run.getUserId(), json.scopes(run.getPapersSnapshot()));
     }
 
     @AfterEach
@@ -118,7 +129,7 @@ class RagHttpTest {
     @Test
     void nativeQueryEmbeddingTwoFilteredSearchesAndNativeChatRoundTrip() {
         var retrieval = runContext.getEvidenceRegistry().registerRetrieval(retriever.retrieve(
-                retrievalRequest(), retrievalContext(), runContext.getDeadline()));
+                retrievalRequest(), runContext.getRetrievalContext(), runContext.getDeadline()));
         var evidence = retrieval.evidence();
         assertEquals(List.of("chunk1"), retrieval.retrievedChunkIds());
         assertEquals(1, evidence.size());
@@ -155,6 +166,52 @@ class RagHttpTest {
     }
 
     @Test
+    void rewriteUsesHistoryAndFallsBackToOriginalForInvalidOutput() {
+        run.setModelConfig("{\"queryRewriteEnabled\":true,\"maxModelCalls\":2,\"maxTokens\":256}");
+        var context = AgentRunContext.fromClaimedRun(run, json);
+        var history = List.of(new ConversationMessage("user", "了解一下 ToolScope"));
+        chatOutput = "{\"query\":\"ToolScope 的检索方法\"}";
+        assertEquals("ToolScope 的检索方法", rewriter.rewrite(context, history));
+        var chat = requests.get("/api/v1/services/aigc/multimodal-generation/generation").getFirst();
+        var input = json.tree(chat.at("/input/messages/1/content/0/text").asText());
+        assertEquals(run.getUserQuery(), input.path("question").asText());
+        assertEquals("了解一下 ToolScope", input.at("/recentMessages/0/content").asText());
+        assertEquals(256, chat.at("/parameters/max_tokens").asInt());
+        chatOutput = "invalid json";
+        assertEquals(run.getUserQuery(), rewriter.rewrite(context, history));
+        verify(store, times(2)).modelCallStarted(40L);
+        verify(store, times(2)).addModelUsage(40L, 10L, 20L);
+    }
+
+    @Test
+    void skipsRewriteForOldDisabledAndSingleCallRuns() {
+        for (String config : List.of("{}", "{\"queryRewriteEnabled\":false,\"maxModelCalls\":2}",
+                "{\"queryRewriteEnabled\":true,\"maxModelCalls\":1}")) {
+            run.setModelConfig(config);
+            assertEquals(run.getUserQuery(), rewriter.rewrite(AgentRunContext.fromClaimedRun(run, json), List.of()));
+        }
+        verifyNoInteractions(store);
+        assertTrue(requests.isEmpty());
+    }
+
+    @Test
+    void reranksFullCandidateSetBeforeApplyingEvidenceLimit() {
+        multipleHits = true;
+        properties.setMaxEvidence(1);
+        when(reranker.call(any(RerankRequest.class))).thenAnswer(invocation -> {
+            RerankRequest request = invocation.getArgument(0);
+            assertEquals(run.getUserQuery(), request.getQuery());
+            assertEquals(2, request.getInstructions().size());
+            var second = request.getInstructions().get(1);
+            return new RerankResponse(List.of(DocumentWithScore.builder().withDocument(second).withScore(0.9).build()));
+        });
+        var result = retriever.retrieve(retrievalRequest(), runContext.getRetrievalContext(), runContext.getDeadline());
+        assertEquals(List.of("chunk1", "chunk2"), result.retrievedChunkIds());
+        assertEquals(List.of("chunk2"), result.candidates().stream().map(item -> item.chunkId()).toList());
+        verifyNoInteractions(store);
+    }
+
+    @Test
     void expiredRunDeadlinePreventsEmbeddingAndSearchRequests() {
         run.setDeadline(runContext.getDeadline().minusMinutes(1));
         var expiredContext = AgentRunContext.fromClaimedRun(run, json);
@@ -167,7 +224,7 @@ class RagHttpTest {
     void partialSearchTimeoutNeverReturnsSuccessfulEvidence() {
         timedOut = true;
         assertThrows(RagCalls.RequestTimeout.class, () -> retriever.retrieve(
-                retrievalRequest(), retrievalContext(), runContext.getDeadline()));
+                retrievalRequest(), runContext.getRetrievalContext(), runContext.getDeadline()));
         assertEquals(1, requests.get("/paper_test/_search").size());
     }
 

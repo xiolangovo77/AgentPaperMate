@@ -4,6 +4,7 @@ import com.ecnu.agentpapermate.agent.context.AgentRunContext;
 import com.ecnu.agentpapermate.config.rag.RagProperties;
 import com.ecnu.agentpapermate.rag.RagAnswerGenerator;
 import com.ecnu.agentpapermate.rag.RagRetriever;
+import com.ecnu.agentpapermate.rag.RagQueryRewriter;
 import com.ecnu.agentpapermate.rag.model.Answer;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.service.run.RunExecutor;
@@ -21,6 +22,8 @@ public class FixedRagExecutor implements RunExecutor {
     private final RunStore store;
     /** 任务查询服务，读取有长度预算的历史用户和助手消息以理解追问。 */
     private final RunQueries queries;
+    /** 结合当前问题和近期对话生成独立检索句。 */
+    private final RagQueryRewriter ragQueryRewriter;
     /** 论文检索器，在本次 Run 的资料范围内检索和融合候选。 */
     private final RagRetriever retriever;
     /** 回答生成器，根据本次证据生成回答并校验引用。 */
@@ -37,7 +40,9 @@ public class FixedRagExecutor implements RunExecutor {
     public Optional<Answer> execute(AgentRunContext context) {
         Long runId = context.getRunId();
         if (!store.retrievalStarted(runId)) return Optional.empty();
-        var request = new RetrievalRequest(context.getUserQuery(), null, properties.getRetrievalTopK());
+        //1、结合近期历史生成本轮独立检索句
+        var history = queries.recentMessages(context);
+        var request = new RetrievalRequest(ragQueryRewriter.rewrite(context, history), null, properties.getRetrievalTopK());
         var candidates = retriever.retrieve(request, context.getRetrievalContext(), context.getDeadline());
         var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
         if (!store.retrieved(runId, retrieval)) return Optional.empty();
@@ -48,6 +53,6 @@ public class FixedRagExecutor implements RunExecutor {
                     List.of()));
         }
         if (!store.answerGenerationStarted(runId)) return Optional.empty();
-        return Optional.of(generator.generate(context, evidence, queries.recentMessages(context)));
+        return Optional.of(generator.generate(context, evidence, history));
     }
 }

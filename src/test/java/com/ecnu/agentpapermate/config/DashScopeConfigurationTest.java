@@ -4,29 +4,53 @@ import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeAutoConfiguration;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingModel;
+import com.alibaba.cloud.ai.model.RerankModel;
+import com.alibaba.cloud.ai.model.RerankRequest;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionConfiguration;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionProperties;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.retry.RetryUtils;
 import org.springframework.ai.autoconfigure.vectorstore.elasticsearch.ElasticsearchVectorStoreProperties;
 import org.springframework.ai.vectorstore.elasticsearch.SimilarityFunction;
 import org.springframework.boot.autoconfigure.elasticsearch.ElasticsearchProperties;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.retry.support.RetryTemplate;
+import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.ResponseErrorHandler;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 class DashScopeConfigurationTest {
     @Test
-    void applicationYamlBindsNativeModelAndCreatesOnlyOneEmbeddingBean() {
+    void applicationYamlConfiguresEmbeddingAndNativeRerankRequest() {
+        var client = RestClient.builder();
+        var server = MockRestServiceServer.bindTo(client).build();
         new ApplicationContextRunner()
+                .withBean(RestClient.Builder.class, () -> client)
+                .withBean(WebClient.Builder.class, WebClient::builder)
+                .withBean(RetryTemplate.class, () -> RetryTemplate.builder().maxAttempts(1).build())
+                .withBean(ResponseErrorHandler.class, () -> RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER)
                 .withInitializer(new ConfigDataApplicationContextInitializer())
                 .withConfiguration(AutoConfigurations.of(DashScopeAutoConfiguration.class))
                 .withUserConfiguration(PaperIngestionConfiguration.class, PaperIngestionProperties.class,
                         PaperProcessingProperties.class)
                 .withPropertyValues("spring.profiles.active=test",
+                        "spring.ai.dashscope.image.enabled=false",
+                        "spring.ai.dashscope.audio.synthesis.enabled=false",
+                        "spring.ai.dashscope.audio.transcription.enabled=false",
                         "spring.ai.dashscope.api-key=fake-test-key")
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(EmbeddingModel.class);
@@ -48,9 +72,28 @@ class DashScopeConfigurationTest {
                     assertThat(processing.getEmbeddingDimension()).isEqualTo(1024);
                     assertThat(processing.getEsIndexName()).isEqualTo("agentpapermate-paper-chunks-qwen37-1024-v1");
                     assertThat(context).doesNotHaveBean("dashscopeChatModel")
-                            .doesNotHaveBean("dashScopeImageModel").doesNotHaveBean("dashscopeRerankModel")
+                            .doesNotHaveBean("dashScopeImageModel").hasSingleBean(RerankModel.class)
                             .doesNotHaveBean("dashScopeSpeechSynthesisModel")
                             .doesNotHaveBean("dashScopeAudioTranscriptionModel");
+                    server.expect(requestTo(connection.getBaseUrl() + "/api/v1/services/rerank/text-rerank/text-rerank"))
+                            .andExpect(method(HttpMethod.POST))
+                            .andExpect(header("Authorization", "Bearer fake-test-key"))
+                            .andExpect(content().json("""
+                                    {"model":"qwen3.7-text-rerank",
+                                     "input":{"query":"文本排序","documents":["量子计算","排序模型"]},
+                                     "parameters":{"top_n":5,"return_documents":false}}
+                                    """))
+                            .andRespond(withSuccess("""
+                                    {"request_id":"test","output":{"results":[
+                                      {"index":1,"relevance_score":0.99},
+                                      {"index":0,"relevance_score":0.01}]},
+                                     "usage":{"total_tokens":10}}
+                                    """, MediaType.APPLICATION_JSON));
+                    var documents = List.of(new Document("量子计算"), new Document("排序模型"));
+                    var ranked = context.getBean(RerankModel.class).call(new RerankRequest("文本排序", documents));
+                    assertThat(ranked.getResults()).extracting(result -> result.getOutput())
+                            .containsExactly(documents.get(1), documents.get(0));
+                    server.verify();
                 });
     }
 }

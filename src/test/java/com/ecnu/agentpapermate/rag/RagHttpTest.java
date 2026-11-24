@@ -6,6 +6,8 @@ import com.ecnu.agentpapermate.support.ai.RunChatCaller;
 import com.ecnu.agentpapermate.service.run.rag.RunStore;
 import com.ecnu.agentpapermate.service.PaperService;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
+import com.ecnu.agentpapermate.rag.model.RetrievalPlan;
+import com.ecnu.agentpapermate.rag.model.RetrievalPlan.Strategy;
 import com.ecnu.agentpapermate.rag.model.ConversationMessage;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
@@ -30,6 +32,7 @@ import java.net.InetSocketAddress;
 import java.time.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.stream.IntStream;
 
 import static com.ecnu.agentpapermate.rag.RunStoreTest.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -49,11 +52,14 @@ class RagHttpTest {
     private RagAnswerGenerator generator;
     /** 执行或模拟检索前的查询改写。 */
     private RagQueryRewriter rewriter;
+    private RetrievalBenchmark benchmark;
     private AgentRunContext runContext;
     private RunStore store;
     private volatile boolean timedOut;
     /** 控制检索替身是否返回多个候选以触发重排。 */
     private volatile boolean multipleHits;
+    private volatile List<String> bm25HitIds;
+    private volatile List<String> knnHitIds;
     /** 指定本地聊天模型替身返回的正文。 */
     private volatile String chatOutput = "{\"answer\":\"答案[E1]\",\"evidenceIds\":[\"E1\"]}";
     /** 模拟候选原文的相关性排序。 */
@@ -74,6 +80,8 @@ class RagHttpTest {
             } else if (path.equals("/paper_test/_search")) {
                 var hits = multipleHits ? List.of(hit("chunk1", "原文", true), hit("chunk2", "相关段落", true))
                         : List.of(hit("chunk1", "原文", true));
+                var hitIds = body.has("knn") ? knnHitIds : bm25HitIds;
+                if (hitIds != null) hits = hitIds.stream().map(id -> hit(id, id + " 外部原文", true)).toList();
                 response = Map.of("timed_out", timedOut, "_shards", Map.of("failed", 0), "hits", Map.of("hits", hits));
             } else if (path.equals("/api/v1/services/aigc/multimodal-generation/generation")) {
                 response = Map.of("request_id", "test", "output", Map.of("choices", List.of(Map.of("finish_reason", "stop",
@@ -103,11 +111,13 @@ class RagHttpTest {
         var calls = new RagCalls(executor, properties, clock);
         store = mock(RunStore.class);
         when(store.modelCallStarted(40L)).thenReturn(true);
-        var caller = new RunChatCaller(new RagConfiguration().ragChatModel(properties, connection), calls, store);
+        var chatModel = new RagConfiguration().ragChatModel(properties, connection);
+        var caller = new RunChatCaller(chatModel, calls, store);
         retriever = new RagRetriever(es, embedding, properties, processing, json, calls, mock(PaperService.class),
                 Optional.of(reranker));
         generator = new RagAnswerGenerator(caller, json);
         rewriter = new RagQueryRewriter(caller, json);
+        benchmark = new RetrievalBenchmark(retriever, rewriter, chatModel, calls, properties);
         run.setId(40L); run.setUserId(20L); run.setUserQuery("论文如何检索？"); run.setModelName("qwen3.7-plus");
         run.setModelConfig("{\"maxTokens\":2048,\"temperature\":0.2}");
         run.setPapersSnapshot(json.write(List.of(scope()))); run.setDeadline(LocalDateTime.now(clock).plusSeconds(30));
@@ -209,6 +219,107 @@ class RagHttpTest {
         assertEquals(List.of("chunk1", "chunk2"), result.retrievedChunkIds());
         assertEquals(List.of("chunk2"), result.candidates().stream().map(item -> item.chunkId()).toList());
         verifyNoInteractions(store);
+    }
+
+    @Test
+    void benchmarkBaselinesCallOnlyTheirOwnLaneAndKeepSearchOrder() {
+        bm25HitIds = List.of("z", "a");
+        knnHitIds = List.of("y", "a");
+        var bm25 = evaluate(Strategy.R0, 30, 100, 20);
+        assertEquals(List.of("z", "a"), bm25.rankedChunkIds());
+        assertEquals(Set.of("/paper_test/_search"), requests.keySet());
+        assertEquals(30, requests.get("/paper_test/_search").getFirst().path("size").asInt());
+        assertTrue(bm25.knnChunkIds().isEmpty());
+
+        requests.clear();
+        var knn = evaluate(Strategy.R1, 30, 200, 20);
+        assertEquals(List.of("y", "a"), knn.rankedChunkIds());
+        assertEquals(1, requests.get("/paper_test/_search").size());
+        var body = requests.get("/paper_test/_search").getFirst();
+        assertEquals(30, body.at("/knn/k").asInt());
+        assertEquals(200, body.at("/knn/num_candidates").asInt());
+        assertEquals(1, requests.get("/api/v1/services/embeddings/text-embedding/text-embedding").size());
+        verifyNoInteractions(reranker, store);
+    }
+
+    @Test
+    void benchmarkHybridInterleavesAndRrfPromotesSharedHits() {
+        bm25HitIds = List.of("z", "shared", "b");
+        knnHitIds = List.of("a", "shared", "c");
+        assertEquals(List.of("z", "a", "shared", "b", "c"), evaluate(Strategy.R2, 20, 100, 20).rankedChunkIds());
+        assertEquals(List.of("shared", "a", "z", "b", "c"), evaluate(Strategy.R3, 20, 100, 20).rankedChunkIds());
+        verifyNoInteractions(reranker, store);
+    }
+
+    @Test
+    void benchmarkRrfConstantCanChangeRankWithoutChangingRecallDepth() {
+        bm25HitIds = IntStream.range(1, 31).mapToObj(i -> i == 30 ? "shared" : "b" + i).toList();
+        knnHitIds = IntStream.range(1, 31).mapToObj(i -> i == 30 ? "shared" : "k" + i).toList();
+        var scope = runContext.getRetrievalContext();
+        var deadline = runContext.getDeadline();
+        var low = benchmark.evaluate(run.getUserQuery(), scope, new RetrievalPlan(Strategy.R3, 30, 100, 10, 20), deadline);
+        var high = benchmark.evaluate(run.getUserQuery(), scope, new RetrievalPlan(Strategy.R3, 30, 100, 60, 20), deadline);
+        assertEquals(low.bm25ChunkIds(), high.bm25ChunkIds());
+        assertEquals(low.knnChunkIds(), high.knnChunkIds());
+        assertEquals("b1", low.rankedChunkIds().getFirst());
+        assertEquals("shared", high.rankedChunkIds().getFirst());
+    }
+
+    @Test
+    void benchmarkExposesFullRerankedWindowWithRrfTailRegardlessOfEvidenceBudget() {
+        var ids = IntStream.rangeClosed(1, 12).mapToObj(i -> "chunk" + i).toList();
+        bm25HitIds = ids;
+        knnHitIds = ids;
+        properties.setMaxEvidence(1);
+        properties.setEvidenceTokenBudget(1);
+        when(reranker.call(any(RerankRequest.class))).thenAnswer(invocation -> {
+            RerankRequest request = invocation.getArgument(0);
+            assertEquals(10, request.getOptions().getTopN());
+            assertNull(request.getOptions().getModel());
+            assertEquals(ids.subList(0, 10), request.getInstructions().stream().map(org.springframework.ai.document.Document::getId).toList());
+            return new RerankResponse(request.getInstructions().reversed().stream()
+                    .map(doc -> DocumentWithScore.builder().withDocument(doc).withScore(0.9).build()).toList());
+        });
+        var result = evaluate(Strategy.R4, 20, 100, 10);
+        assertEquals(ids, result.candidateChunkIds());
+        assertEquals(10, result.rerankInputCount());
+        assertEquals(ids.subList(0, 10).reversed(), result.rankedChunkIds().subList(0, 10));
+        assertEquals(ids.subList(10, 12), result.rankedChunkIds().subList(10, 12));
+        assertEquals(12, json.tree(json.write(result)).path("ranked_chunk_ids").size());
+    }
+
+    @Test
+    void benchmarkRewriteChangesOnlyRecallAndRecordsFallbackAndUsage() {
+        bm25HitIds = List.of("a", "b");
+        knnHitIds = List.of("b", "a");
+        when(reranker.call(any(RerankRequest.class))).thenAnswer(invocation -> {
+            RerankRequest request = invocation.getArgument(0);
+            assertEquals(run.getUserQuery(), request.getQuery());
+            return new RerankResponse(request.getInstructions().stream()
+                    .map(doc -> DocumentWithScore.builder().withDocument(doc).withScore(0.9).build()).toList());
+        });
+        chatOutput = "{\"query\":\"检索原理\"}";
+        var result = evaluate(Strategy.R5, 20, 100, 20);
+        assertEquals("检索原理", result.recallQuery());
+        assertEquals(run.getUserQuery(), result.rerankQuery());
+        assertEquals("rewritten", result.rewrite().status());
+        assertEquals(10, result.rewrite().inputTokens().intValue());
+        assertEquals(20, result.rewrite().outputTokens().intValue());
+        assertEquals("检索原理", requests.get("/paper_test/_search").getFirst().at("/query/bool/must/multi_match/query").asText());
+        assertEquals("检索原理", requests.get("/api/v1/services/embeddings/text-embedding/text-embedding")
+                .getFirst().at("/input/texts/0").asText());
+        assertEquals(1, requests.get("/api/v1/services/aigc/multimodal-generation/generation").size());
+
+        chatOutput = "invalid json";
+        var fallback = evaluate(Strategy.R5, 20, 100, 20);
+        assertEquals(run.getUserQuery(), fallback.recallQuery());
+        assertEquals("invalid_fallback", fallback.rewrite().status());
+        verifyNoInteractions(store);
+    }
+
+    private RetrievalBenchmark.Result evaluate(Strategy strategy, int topK, int numCandidates, int rerankInput) {
+        return benchmark.evaluate(run.getUserQuery(), runContext.getRetrievalContext(),
+                new RetrievalPlan(strategy, topK, numCandidates, 60, rerankInput), runContext.getDeadline());
     }
 
     @Test

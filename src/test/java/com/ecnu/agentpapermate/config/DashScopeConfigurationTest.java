@@ -4,6 +4,7 @@ import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeAutoConfiguration;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeConnectionProperties;
 import com.alibaba.cloud.ai.autoconfigure.dashscope.DashScopeEmbeddingProperties;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingModel;
+import com.alibaba.cloud.ai.dashscope.rerank.DashScopeRerankOptions;
 import com.alibaba.cloud.ai.model.RerankModel;
 import com.alibaba.cloud.ai.model.RerankRequest;
 import com.ecnu.agentpapermate.config.paper.PaperIngestionConfiguration;
@@ -90,9 +91,26 @@ class DashScopeConfigurationTest {
                                      "usage":{"total_tokens":10}}
                                     """, MediaType.APPLICATION_JSON));
                     var documents = List.of(new Document("量子计算"), new Document("排序模型"));
-                    var ranked = context.getBean(RerankModel.class).call(new RerankRequest("文本排序", documents));
+                    var model = context.getBean(RerankModel.class);
+                    var ranked = model.call(new RerankRequest("文本排序", documents));
                     assertThat(ranked.getResults()).extracting(result -> result.getOutput())
                             .containsExactly(documents.get(1), documents.get(0));
+                    server.verify();
+
+                    server.reset();
+                    server.expect(requestTo(connection.getBaseUrl() + "/api/v1/services/rerank/text-rerank/text-rerank"))
+                            .andExpect(content().json("""
+                                    {"model":"qwen3.7-text-rerank","parameters":{"top_n":12,"return_documents":false}}
+                                    """))
+                            .andRespond(withSuccess("""
+                                    {"request_id":"test","output":{"results":[{"index":0,"relevance_score":0.9}]},
+                                     "usage":{"total_tokens":10}}
+                                    """, MediaType.APPLICATION_JSON));
+                    var evaluationDocuments = java.util.stream.IntStream.range(0, 12)
+                            .mapToObj(i -> new Document("评测片段" + i)).toList();
+                    model.call(new RerankRequest("文本排序", evaluationDocuments,
+                            DashScopeRerankOptions.builder().withModel(null).withReturnDocuments(null)
+                                    .withTopN(evaluationDocuments.size()).build()));
                     server.verify();
                 });
     }

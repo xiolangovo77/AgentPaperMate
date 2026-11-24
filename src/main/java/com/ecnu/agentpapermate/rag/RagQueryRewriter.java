@@ -8,6 +8,7 @@ import com.ecnu.agentpapermate.support.json.RagJson;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +18,7 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class RagQueryRewriter {
+    static final String PROMPT_VERSION = "retrieval-rewrite-v1";
     /** 通过任务预算和用量登记入口调用改写模型。 */
     private final RunChatCaller runChatCaller;
     /** 序列化原问题和对话历史，并解析模型返回的检索句。 */
@@ -31,9 +33,15 @@ public class RagQueryRewriter {
         if (!config.path("queryRewriteEnabled").asBoolean(false) || config.path("maxModelCalls").asInt(1) < 2) {
             return original;
         }
-        //2、结合原问题和近期对话生成独立检索句
-        var options = DashScopeChatOptions.builder().withModel(context.getModelName())
-                .withTemperature(0.0).withMaxToken(Math.min(512, config.path("maxTokens").asInt(512)))
+        var response = runChatCaller.call(context, prompt(original, history, context.getModelName(),
+                Math.min(512, config.path("maxTokens").asInt(512))));
+        var query = parseQuery(response);
+        return query == null ? original : query;
+    }
+
+    Prompt prompt(String original, List<ConversationMessage> history, String model, int maxTokens) {
+        var options = DashScopeChatOptions.builder().withModel(model)
+                .withTemperature(0.0).withMaxToken(maxTokens)
                 .withEnableSearch(false).build();
         var prompt = new SystemMessage("""
                 将当前论文问题改写为一条适合关键词和向量检索的独立查询。问题已经清楚时保留原句。
@@ -42,11 +50,13 @@ public class RagQueryRewriter {
                 只输出 JSON 对象 {"query":"检索句"}。
                 """);
         var input = new UserMessage(ragJson.write(Map.of("question", original, "recentMessages", history)));
-        var response = runChatCaller.call(context, new Prompt(List.of(prompt, input), options));
-        //3、校验返回的检索句，内容不可用时回退到原问题
-        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) return original;
+        return new Prompt(List.of(prompt, input), options);
+    }
+
+    String parseQuery(ChatResponse response) {
+        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) return null;
         String text = response.getResult().getOutput().getText();
-        if (text == null || text.isBlank() || text.length() > 8192) return original;
+        if (text == null || text.isBlank() || text.length() > 8192) return null;
         try {
             var query = ragJson.tree(text).path("query");
             // 限制改写长度，避免把解释性长文作为检索输入。
@@ -56,6 +66,6 @@ public class RagQueryRewriter {
         } catch (IllegalArgumentException ignored) {
             // 单次改写格式有误时直接用用户问题召回。
         }
-        return original;
+        return null;
     }
 }

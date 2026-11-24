@@ -5,7 +5,10 @@ import com.ecnu.agentpapermate.rag.model.PaperScope;
 import com.ecnu.agentpapermate.rag.model.RetrievalCandidates;
 import com.ecnu.agentpapermate.rag.model.RetrievalRequest;
 import com.ecnu.agentpapermate.rag.model.RetrievalContext;
+import com.ecnu.agentpapermate.rag.model.RetrievalPlan;
+import com.ecnu.agentpapermate.rag.model.RetrievalPlan.Strategy;
 import com.alibaba.cloud.ai.dashscope.embedding.DashScopeEmbeddingOptions;
+import com.alibaba.cloud.ai.dashscope.rerank.DashScopeRerankOptions;
 import com.alibaba.cloud.ai.model.RerankModel;
 import com.alibaba.cloud.ai.model.RerankRequest;
 import com.ecnu.agentpapermate.config.paper.PaperProcessingProperties;
@@ -28,6 +31,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 
 /** 自行发送 BM25 和带前置过滤的 kNN 请求，在 Java 中按 RRF 合并证据。 */
 @Component
@@ -84,7 +89,23 @@ public class RagRetriever {
         if (request.topK() > properties.getRetrievalTopK()) {
             throw new IllegalArgumentException("每路检索候选数量不能超过配置上限：" + properties.getRetrievalTopK());
         }
-        //1、用 query 模式生成问题向量，不能沿用入库时的 document 模式
+        int topK = request.topK();
+        var plan = new RetrievalPlan(rerankModel.isPresent() ? Strategy.R4 : Strategy.R3,
+                topK, Math.max(100, topK * 5), 60, 200);
+        var ranking = rank(request, context, deadline, plan, request.query(), false);
+        return selectEvidence(ranking.candidates(), ranking.ranked());
+    }
+
+    RankedRetrieval evaluateRanking(RetrievalRequest request, RetrievalContext context, LocalDateTime deadline,
+                                    RetrievalPlan plan, String rerankQuery) {
+        if (request.topK() != plan.topK()) throw new IllegalArgumentException("评测请求与策略的 TopK 不一致");
+        var ranking = rank(request, context, deadline, plan, rerankQuery, true);
+        return new RankedRetrieval(ranking.bm25Ids(), ranking.knnIds(), chunkIds(ranking.candidates()),
+                chunkIds(ranking.ranked()), ranking.stageMillis(), ranking.rerankInputCount());
+    }
+
+    private Ranking rank(RetrievalRequest request, RetrievalContext context, LocalDateTime deadline,
+                         RetrievalPlan plan, String rerankQuery, boolean evaluation) {
         List<PaperScope> scopes = resolveScopes(request, context);
         for (PaperScope scope : scopes) {
             if (!Objects.equals(scope.embeddingModel(), processing.getEmbeddingModel())
@@ -93,48 +114,89 @@ public class RagRetriever {
                 throw new IllegalStateException("任务向量配置已变化，请重新提交任务");
             }
         }
+        Strategy strategy = plan.strategy();
+        if (strategy.usesReranker() && rerankModel.isEmpty()) throw new IllegalStateException("评测策略要求配置精排模型");
+        Long userId = context.userId();
+        Map<String, Long> stageMillis = new LinkedHashMap<>();
+        float[] vector = null;
+        if (strategy != Strategy.R0) {
+            long start = System.nanoTime();
+            vector = queryVector(userId, scopes, request.query(), deadline);
+            stageMillis.put("embedding", elapsedMillis(start));
+        }
+        Object filter = filter(userId, scopes);
+        int k = plan.topK();
+        String path = searchPath(scopes);
+        List<JsonNode> bm25 = List.of();
+        List<JsonNode> knn = List.of();
+        if (strategy != Strategy.R1) {
+            long start = System.nanoTime();
+            var lexical = Map.of("size", k, "_source", List.of("content", "metadata"),
+                    "query", Map.of("bool", Map.of("filter", filter, "must", Map.of("multi_match", Map.of(
+                            "query", request.query(), "fields", List.of("content", "content.en", "content.cjk"))))));
+            bm25 = scopedSearch(userId, scopes, deadline, path, lexical);
+            stageMillis.put("bm25", elapsedMillis(start));
+        }
+        if (vector != null) {
+            long start = System.nanoTime();
+            var semantic = Map.of("size", k, "_source", List.of("content", "metadata"), "knn", Map.of(
+                    "field", "embedding", "query_vector", vector, "k", k, "num_candidates", plan.numCandidates(), "filter", filter));
+            knn = scopedSearch(userId, scopes, deadline, path, semantic);
+            stageMillis.put("knn", elapsedMillis(start));
+        }
+
+        long start = System.nanoTime();
+        var orderedHits = switch (strategy) {
+            case R0 -> bm25;
+            case R1 -> knn;
+            case R2 -> interleave(bm25, knn);
+            case R3, R4, R5 -> rrf(plan.rrfK(), List.of(bm25, knn));
+        };
+        var candidates = readCandidates(userId, scopes, orderedHits);
+        stageMillis.put("candidate_ranking", elapsedMillis(start));
+        var ranked = candidates;
+        int rerankInputCount = 0;
+        if (strategy.usesReranker() && candidates.size() > 1) {
+            int limit = Math.min(plan.rerankInputSize(), candidates.size());
+            var input = candidates.subList(0, limit);
+            long rerankStart = System.nanoTime();
+            var reordered = calls.call(deadline, () -> {
+                verifyAccess(userId, input.stream().map(Candidate::scope).distinct().toList());
+                return rerank(rerankModel.orElseThrow(), rerankQuery, input, evaluation);
+            });
+            stageMillis.put("rerank", elapsedMillis(rerankStart));
+            rerankInputCount = limit;
+            ranked = new ArrayList<>(reordered);
+            ranked.addAll(candidates.subList(limit, candidates.size()));
+        }
+        return new Ranking(candidates, ranked,
+                evaluation ? chunkIds(readCandidates(userId, scopes, bm25)) : List.of(),
+                evaluation ? chunkIds(readCandidates(userId, scopes, knn)) : List.of(),
+                Map.copyOf(stageMillis), rerankInputCount);
+    }
+
+    private float[] queryVector(Long userId, List<PaperScope> scopes, String query, LocalDateTime deadline) {
+        var scope = scopes.getFirst();
         float[] vector = calls.call(deadline, () -> {
-            verifyAccess(context.userId(), scopes);
-            var options = DashScopeEmbeddingOptions.builder().withModel(scopes.getFirst().embeddingModel())
-                    .withTextType("query").build();
-            var response = embedding.call(new EmbeddingRequest(List.of(request.query()), options));
+            verifyAccess(userId, scopes);
+            var options = DashScopeEmbeddingOptions.builder().withModel(scope.embeddingModel()).withTextType("query").build();
+            var response = embedding.call(new EmbeddingRequest(List.of(query), options));
             if (response.getResults().size() != 1) throw new IllegalStateException("问题向量数量错误");
             return response.getResults().getFirst().getOutput();
         });
-        if (vector.length != scopes.getFirst().embeddingDimension()) throw new IllegalStateException("问题向量维度错误");
+        if (vector.length != scope.embeddingDimension()) throw new IllegalStateException("问题向量维度错误");
         for (float number : vector) if (!Float.isFinite(number)) throw new IllegalStateException("问题向量含无效数值");
-
-        //2、两路检索使用相同权限与快照约束，未知页码片段不作为可发布引用
-        Object filter = filter(context.userId(), scopes);
-        int k = request.topK();
-        Map<String, Object> lexical = Map.of("size", k, "_source", List.of("content", "metadata"),
-                "query", Map.of("bool", Map.of("filter", filter, "must", Map.of("multi_match", Map.of(
-                        "query", request.query(), "fields", List.of("content", "content.en", "content.cjk"))))));
-        Map<String, Object> semantic = Map.of("size", k, "_source", List.of("content", "metadata"), "knn", Map.of(
-                "field", "embedding", "query_vector", vector, "k", k, "num_candidates", Math.max(100, k * 5), "filter", filter));
-        String path = searchPath(scopes);
-        JsonNode bm25 = calls.call(deadline, () -> {
-            verifyAccess(context.userId(), scopes);
-            return search(path, lexical);
-        });
-        JsonNode knn = calls.call(deadline, () -> {
-            verifyAccess(context.userId(), scopes);
-            return search(path, semantic);
-        });
-
-        //3、按排序名次融合而非直接相加不同量纲的分数，统一去重并限制证据预算
-        var candidates = collectCandidates(context.userId(), scopes, bm25, knn);
-        var ranked = candidates;
-        if (rerankModel.isPresent() && candidates.size() > 1) {
-            ranked = calls.call(deadline, () -> {
-                verifyAccess(context.userId(), candidates.stream().map(Candidate::scope).distinct().toList());
-                return rerank(rerankModel.get(), request.query(), candidates);
-            });
-        }
-        return selectEvidence(candidates, ranked);
+        return vector;
     }
 
-    private List<Candidate> rerank(RerankModel model, String query, List<Candidate> candidates) {
+    private List<JsonNode> scopedSearch(Long userId, List<PaperScope> scopes, LocalDateTime deadline, String path, Object body) {
+        return calls.call(deadline, () -> {
+            verifyAccess(userId, scopes);
+            return searchHits(search(path, body));
+        });
+    }
+
+    private List<Candidate> rerank(RerankModel model, String query, List<Candidate> candidates, boolean completeRanking) {
         //1、将候选原文与片段标识绑定，供重排后还原来源
         Map<String, Candidate> byId = new HashMap<>();
         List<Document> documents = new ArrayList<>();
@@ -143,8 +205,15 @@ public class RagRetriever {
             documents.add(new Document(candidate.chunkId(), candidate.quote(), Map.of()));
         }
         //2、取得模型排名，拒绝空结果和重复或未知的片段标识
-        var results = model.call(new RerankRequest(query, documents)).getResults();
-        if (results.isEmpty()) throw new IllegalStateException("重排未返回候选片段");
+        // SDK 的请求选项带有默认模型名，显式留空以继承已配置的精排模型。
+        var request = completeRanking
+                ? new RerankRequest(query, documents, DashScopeRerankOptions.builder().withModel(null)
+                        .withReturnDocuments(null).withTopN(documents.size()).build())
+                : new RerankRequest(query, documents);
+        var results = model.call(request).getResults();
+        if (results.isEmpty() || (completeRanking && results.size() != documents.size())) {
+            throw new IllegalStateException("精排未返回所需的候选排名");
+        }
         List<Candidate> ranked = new ArrayList<>();
         for (var result : results) {
             Candidate candidate = byId.remove(result.getOutput().getId());
@@ -292,30 +361,45 @@ public class RagRetriever {
     public record BrowseResult(Map<String, Object> data, RetrievalCandidates candidates) { }
 
     RetrievalCandidates fuse(Long userId, List<PaperScope> scopes, JsonNode... responses) {
-        var candidates = collectCandidates(userId, scopes, responses);
+        var candidates = readCandidates(userId, scopes, rrf(60, Arrays.stream(responses).map(RagRetriever::searchHits).toList()));
         return selectEvidence(candidates, candidates);
     }
 
-    private List<Candidate> collectCandidates(Long userId, List<PaperScope> scopes, JsonNode... responses) {
+    private static List<JsonNode> searchHits(JsonNode response) {
+        return StreamSupport.stream(response.at("/hits/hits").spliterator(), false).toList();
+    }
+
+    private List<JsonNode> interleave(List<JsonNode> bm25, List<JsonNode> knn) {
+        List<JsonNode> ordered = new ArrayList<>(bm25.size() + knn.size());
+        for (int i = 0; i < Math.max(bm25.size(), knn.size()); i++) {
+            if (i < bm25.size()) ordered.add(bm25.get(i));
+            if (i < knn.size()) ordered.add(knn.get(i));
+        }
+        return ordered;
+    }
+
+    private List<JsonNode> rrf(int rrfK, List<List<JsonNode>> responses) {
         //1、按各路召回名次累加融合分数并去除重复命中
         Map<String, JsonNode> hits = new HashMap<>();
         Map<String, Double> scores = new HashMap<>();
-        for (JsonNode response : responses) {
+        for (var response : responses) {
             Set<String> seen = new HashSet<>();
             int rank = 0;
-            for (JsonNode hit : response.at("/hits/hits")) {
+            for (JsonNode hit : response) {
                 String key = hit.path("_index").asText() + "/" + hit.path("_id").asText();
                 if (!seen.add(key)) continue;
                 hits.putIfAbsent(key, hit);
-                scores.merge(key, 1.0 / (60 + ++rank), Double::sum);
+                scores.merge(key, 1.0 / (rrfK + ++rank), Double::sum);
             }
         }
-        List<String> ordered = scores.keySet().stream().sorted(Comparator
-                .<String>comparingDouble(scores::get).reversed().thenComparing(Comparator.naturalOrder())).toList();
+        return scores.keySet().stream().sorted(Comparator
+                .<String>comparingDouble(scores::get).reversed().thenComparing(Comparator.naturalOrder())).map(hits::get).toList();
+    }
+
+    private List<Candidate> readCandidates(Long userId, List<PaperScope> scopes, List<JsonNode> hits) {
         List<Candidate> candidates = new ArrayList<>();
         Set<String> chunkIds = new HashSet<>();
-        for (String key : ordered) {
-            JsonNode hit = hits.get(key);
+        for (JsonNode hit : hits) {
             JsonNode meta = hit.at("/_source/metadata");
             PaperScope scope = scopes.stream().filter(item -> item.paperId().toString().equals(meta.path("paperId").asText())
                     && item.esIndexName().equals(hit.path("_index").asText())
@@ -358,10 +442,24 @@ public class RagRetriever {
             if (result.size() >= properties.getMaxEvidence()) break;
         }
         //2、记录完整候选顺序和预算内的原文证据
-        return new RetrievalCandidates(candidates.stream().map(Candidate::chunkId).toList(), result);
+        return new RetrievalCandidates(chunkIds(candidates), result);
+    }
+
+    private static List<String> chunkIds(List<Candidate> candidates) {
+        return candidates.stream().map(Candidate::chunkId).toList();
+    }
+
+    private static long elapsedMillis(long start) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
     }
 
     private record Candidate(PaperScope scope, String chunkId, int start, int end, String quote) { }
+
+    private record Ranking(List<Candidate> candidates, List<Candidate> ranked, List<String> bm25Ids, List<String> knnIds,
+                           Map<String, Long> stageMillis, int rerankInputCount) { }
+
+    record RankedRetrieval(List<String> bm25Ids, List<String> knnIds, List<String> candidateIds, List<String> rankedIds,
+                           Map<String, Long> stageMillis, int rerankInputCount) { }
 
     private JsonNode search(String path, Object body) {
         //1、显式拒绝分片失败和超时的部分结果，避免把不完整检索标为完成

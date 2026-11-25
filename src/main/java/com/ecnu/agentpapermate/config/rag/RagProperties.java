@@ -33,11 +33,21 @@ public class RagProperties {
     /** 本实例同时执行的任务数量。 */
     private int maxConcurrentRuns = 4;
     /** 固定 RAG 每路检索的候选数量，同时作为所有检索请求（含 Agent）的 topK 上限。 */
-    private int retrievalTopK = 20;
+    private int retrievalTopK = 10;
+    /** kNN 候选数，设为 0 时按每路 TopK 推导。 */
+    private int retrievalNumCandidates = 100;
+    /** RRF 融合的排名常数 k，单路贡献为 {@code 1 / (k + rank)}。k 越大，名次间的得分差距越小。 */
+    private int retrievalRrfK = 10;
+    /** 按 RRF 融合排名送入精排模型的候选分块数上限。 */
+    private int retrievalRerankInput = 20;
+    /** 固定每路召回的深度，并要求精排返回完整排名。 */
+    private boolean frozenRetrieval;
+    /** 为空时沿用执行器的回答语言。 */
+    private String answerLanguage = "";
     /** 固定 RAG 在召回前将问题改写为独立检索句。 */
-    private boolean queryRewriteEnabled = true;
+    private boolean queryRewriteEnabled;
     /** 融合后允许提供给模型的证据数量。 */
-    private int maxEvidence = 8;
+    private int maxEvidence = 5;
     /** 证据文本总预算，使用 cl100k_base 估算。 */
     private int evidenceTokenBudget = 6000;
     /** 单个会话最多参与一次检索的论文数量。 */
@@ -51,6 +61,10 @@ public class RagProperties {
         if (requestTimeoutSeconds < 1 || requestTimeoutSeconds > 300 || runTimeoutSeconds < 1
                 || runTimeoutSeconds > 3600 || queueTimeoutSeconds < 1 || queueTimeoutSeconds > 3600
                 || maxConcurrentRuns < 1 || maxConcurrentRuns > 64 || retrievalTopK < 1 || retrievalTopK > 100
+                || retrievalNumCandidates < 0 || retrievalNumCandidates > 10000
+                || (retrievalNumCandidates != 0 && retrievalNumCandidates < retrievalTopK)
+                || retrievalRrfK < 1 || retrievalRrfK > 10000
+                || retrievalRerankInput < 1 || retrievalRerankInput > 200
                 || maxEvidence < 1 || maxEvidence > retrievalTopK || evidenceTokenBudget < 128
                 || evidenceTokenBudget > 32000 || maxPapers < 1 || maxPapers > 100
                 || maxOutputTokens < 1 || maxOutputTokens > 16000 || maxModelCalls < 1 || maxModelCalls > 100

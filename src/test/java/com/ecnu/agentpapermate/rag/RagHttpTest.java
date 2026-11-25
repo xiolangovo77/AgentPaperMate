@@ -27,6 +27,11 @@ import com.sun.net.httpserver.HttpServer;
 import org.apache.http.HttpHost;
 import org.elasticsearch.client.RestClient;
 import org.junit.jupiter.api.*;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.ConfigurationPropertySources;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.io.ClassPathResource;
 
 import java.net.InetSocketAddress;
 import java.time.*;
@@ -134,6 +139,32 @@ class RagHttpTest {
         if (es != null) es.close();
         if (server != null) server.stop(0);
         if (executor != null) executor.shutdownNow();
+    }
+
+    @Test
+    void defaultConfigurationUsesFrozenR4ForRetrieval() throws Exception {
+        var source = new YamlPropertySourceLoader().load("application", new ClassPathResource("application.yml"));
+        new Binder(ConfigurationPropertySources.from(source)).bind("rag", Bindable.ofInstance(properties));
+        properties.validate();
+        assertEquals(10, properties.getRetrievalRrfK());
+        assertFalse(properties.isQueryRewriteEnabled());
+
+        bm25HitIds = IntStream.rangeClosed(1, 10).mapToObj(i -> "bm25-" + i).toList();
+        knnHitIds = IntStream.rangeClosed(1, 10).mapToObj(i -> "knn-" + i).toList();
+        when(reranker.call(any(RerankRequest.class))).thenAnswer(invocation -> {
+            RerankRequest request = invocation.getArgument(0);
+            assertEquals(20, request.getInstructions().size());
+            assertEquals(20, request.getOptions().getTopN());
+            return new RerankResponse(request.getInstructions().stream()
+                    .map(doc -> DocumentWithScore.builder().withDocument(doc).withScore(0.9).build()).toList());
+        });
+        var request = new RetrievalRequest(run.getUserQuery(), null, 3);
+        var result = retriever.retrieve(request, runContext.getRetrievalContext(), runContext.getDeadline());
+        var searches = requests.get("/paper_test/_search");
+        assertEquals(10, searches.getFirst().path("size").asInt());
+        assertEquals(10, searches.getLast().at("/knn/k").asInt());
+        assertEquals(100, searches.getLast().at("/knn/num_candidates").asInt());
+        assertEquals(5, result.candidates().size());
     }
 
     @Test

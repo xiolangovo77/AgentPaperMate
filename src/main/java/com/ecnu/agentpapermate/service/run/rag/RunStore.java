@@ -121,6 +121,9 @@ public class RunStore {
                 "maxModelCalls", properties.getMaxModelCalls(), "maxToolCalls", properties.getMaxToolCalls(),
                 "toolTimeoutSeconds", properties.getToolTimeoutSeconds(),
                 "agentContextTokenBudget", properties.getAgentContextTokenBudget()));
+        if (!properties.getAnswerLanguage().isBlank()) {
+            modelConfig.put("answerLanguage", properties.getAnswerLanguage());
+        }
         if ("agent".equals(run.getExecutorType())) {
             var skill = skills.select(run.getUserQuery());
             run.setSkillId(skill.id()); run.setSkillVersion(skill.version()); run.setSkillContentHash(skill.contentHash());

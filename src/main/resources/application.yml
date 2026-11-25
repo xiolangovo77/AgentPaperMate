@@ -120,9 +120,14 @@ rag:
   queue-timeout-seconds: 300
   poll-interval-ms: 1000
   max-concurrent-runs: 4
-  retrieval-top-k: 20
-  query-rewrite-enabled: true
-  max-evidence: 8
+  # QASPER 冻结的 R4 检索配置，Fixed RAG 和 Agent 共用。
+  retrieval-top-k: 10
+  retrieval-num-candidates: 100
+  retrieval-rrf-k: 10
+  retrieval-rerank-input: 20
+  frozen-retrieval: true
+  query-rewrite-enabled: false
+  max-evidence: 5
   evidence-token-budget: 6000
   max-papers: 50
   max-sse-connections: 100

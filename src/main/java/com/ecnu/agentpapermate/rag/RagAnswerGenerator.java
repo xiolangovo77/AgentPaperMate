@@ -49,6 +49,8 @@ public class RagAnswerGenerator {
         Map<String, Object> input = Map.of("question", context.getUserQuery(), "recentMessages", recentMessages,
                 "evidence", evidence.stream().map(item -> Map.of("id", item.evidenceId(), "text", item.quotedText())).toList());
         JsonNode config = json.tree(context.getModelConfig());
+        String language = config.path("answerLanguage").asText();
+        if (!language.isBlank()) rules += "\nAnswer in " + language + ".";
         var options = DashScopeChatOptions.builder().withModel(context.getModelName())
                 .withTemperature(config.path("temperature").asDouble(0.2))
                 .withMaxToken(config.path("maxTokens").asInt(2048)).build();

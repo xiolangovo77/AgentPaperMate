@@ -180,7 +180,7 @@ data:{"runId":"123","eventId":"3","type":"retrieval_completed","timestamp":"2026
 
 检索入口为 `RagRetriever.retrieve(RetrievalRequest request, RetrievalContext context, LocalDateTime deadline)`，不接收 `AgentRun`。执行层负责读取持久化快照、构造后端上下文，并从 `AgentRunContext.getDeadline()` 单独传入 Run 的截止时间。
 
-- `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节；topK 为每路候选数量，构造时限制 1 至 100，执行时还必须不超过 `rag.retrieval-top-k`。该配置同时是固定 RAG 的默认值和 Agent 的上限；超限请求在调用外部服务前报错，不静默截断。融合后候选可能多于 topK。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
+- `RetrievalRequest(query, requestedPaperIds, topK)`：query 非空且不超过 16000 个 UTF-8 字节。请求的 topK 须在 1 至 100 之间，且不得超过 `rag.retrieval-top-k`。默认开启 `rag.frozen-retrieval`，两种模式均以配置值作为实际的每路召回数量。超限请求在调用外部服务前报错。融合后候选可能多于每路召回数量。requestedPaperIds 为 null 时使用完整上下文范围；显式空列表、重复 ID、无效 ID 和范围外 ID 均拒绝，不静默删掉越界项。
 - `RetrievalContext(userId, allowedScopes)`：只保存后端用户与检索范围，不持有 Run 的时间预算，也不作为 HTTP 或模型工具的直接输入。范围列表不可变，保留 Run 固定的索引、版本、尝试令牌和向量配置，范围总数受 `rag.max-papers` 限制。请求只能从该范围选择子集。
 - Embedding、BM25、kNN 统一使用 request.query；BM25 与 kNN 统一使用解析出的子集和上下文 userId。访问前重新检查论文当前归属，`RunStore` 在保存证据和发布答案前再次验权；普通会话资料调整不会替换启动时快照，删除或撤权则阻止继续访问或发布结果。
 - 外部请求使用 `RagCalls.call(deadline, operation)`，继续受单次请求和整个 Run 截止时间约束。模型、工具和检索调用统一使用 `AgentRunContext.deadline`，该不可变字段从已领取的 Run 快照复制；旧的 `call(AgentRun, operation)` 仍委托给这个入口。
@@ -215,7 +215,7 @@ var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
 
 BM25 和 kNN 都按用户归属及逐篇快照过滤。kNN 的过滤位于 `knn.filter` 内，保证在近邻检索阶段限定范围，参考 [Elasticsearch 官方过滤示例](https://www.elastic.co/docs/solutions/search/vector/knn/filtered-knn-search)。ES 超时或分片失败不会被当成完整检索结果。
 
-两路各取 20 个候选，以 RRF（常数 60）融合并去重，最多登记 8 条证据，原文总预算 6000 个 cl100k_base 估算 Token。当前只使用有可靠物理页码且 `lowConfidence=false` 的片段，以匹配引用表非空页码约束。没有有效证据时直接保存明确的无法确认说明，不调用回答模型、不生成引用。
+默认沿用 QASPER 冻结的 R4 配置。Fixed RAG 和 Agent 的 BM25 与 kNN 每路各取 10 个结果，kNN 的 `num_candidates` 为 100。两路经 RRF（常数 10）融合并去重，最多送入精排 20 个分块，最终最多登记 5 条证据，原文总预算 6000 个 cl100k_base 估算 Token。Fixed RAG 默认关闭独立查询改写。当前只使用有可靠物理页码且 `lowConfidence=false` 的片段，以匹配引用表非空页码约束。没有有效证据时直接保存明确的无法确认说明，不调用回答模型、不生成引用。
 
 `agent_run.retrieval_snapshot` 保存全 Run 各轮范围、版本及来源校验通过的 RRF 候选 Chunk ID 去重并集，采集位置在证据 Token、最大证据数量和相同原文筛选之前。其长度用于候选数量统计，与 Gold 的交集用于全部候选 Gold 覆盖率。单轮数组仍保持 RRF 排名；多轮按首次出现顺序追加，不构成跨轮相关度排名，不能无说明地将其前5/10条和固定 RAG 的排名指标直接比较。`evidence_snapshot` 保存本轮选用的证据，两份快照与 `retrieval_completed` 在同一短事务提交。SQL `NULL` 表示未采集或未提交，JSON `[]` 表示已保存至少一轮检索但累计没有候选；后续空轮次不清空历史集合。取消或超时后的新结果不得迟到写入；后续模型失败不会清空已提交的快照，历史任务不补填。
 

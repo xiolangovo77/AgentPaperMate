@@ -89,10 +89,13 @@ public class RagRetriever {
         if (request.topK() > properties.getRetrievalTopK()) {
             throw new IllegalArgumentException("每路检索候选数量不能超过配置上限：" + properties.getRetrievalTopK());
         }
-        int topK = request.topK();
-        var plan = new RetrievalPlan(rerankModel.isPresent() ? Strategy.R4 : Strategy.R3,
-                topK, Math.max(100, topK * 5), 60, 200);
-        var ranking = rank(request, context, deadline, plan, request.query(), false);
+        boolean frozen = properties.isFrozenRetrieval();
+        int topK = frozen ? properties.getRetrievalTopK() : request.topK();
+        int numCandidates = properties.getRetrievalNumCandidates();
+        var plan = new RetrievalPlan(frozen || rerankModel.isPresent() ? Strategy.R4 : Strategy.R3,
+                topK, numCandidates == 0 ? Math.max(100, topK * 5) : numCandidates,
+                properties.getRetrievalRrfK(), properties.getRetrievalRerankInput());
+        var ranking = rank(request, context, deadline, plan, request.query(), frozen);
         return selectEvidence(ranking.candidates(), ranking.ranked());
     }
 

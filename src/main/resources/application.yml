@@ -125,9 +125,10 @@ rag:
   retrieval-num-candidates: 100
   retrieval-rrf-k: 10
   retrieval-rerank-input: 20
+  paper-library-top-p: 10
   frozen-retrieval: true
   query-rewrite-enabled: false
   max-evidence: 5
   evidence-token-budget: 6000
-  max-papers: 50
+  max-papers: 100
   max-sse-connections: 100

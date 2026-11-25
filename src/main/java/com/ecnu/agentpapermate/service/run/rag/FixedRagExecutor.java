@@ -38,15 +38,17 @@ public class FixedRagExecutor implements RunExecutor {
 
     @Override
     public Optional<Answer> execute(AgentRunContext context) {
+        //1、进入检索阶段，并结合近期对话构造本轮检索请求
         Long runId = context.getRunId();
         if (!store.retrievalStarted(runId)) return Optional.empty();
-        //1、结合近期历史生成本轮独立检索句
         var history = queries.recentMessages(context);
         var request = new RetrievalRequest(ragQueryRewriter.rewrite(context, history), null, properties.getRetrievalTopK());
+        //2、在会话全范围检索段落并登记符合证据预算的原文
         var candidates = retriever.retrieve(request, context.getRetrievalContext(), context.getDeadline());
         var retrieval = context.getEvidenceRegistry().registerRetrieval(candidates);
         if (!store.retrieved(runId, retrieval)) return Optional.empty();
 
+        //3、有可引用的证据时生成回答，否则给出无可靠证据的提示
         var evidence = retrieval.evidence();
         if (evidence.isEmpty()) {
             return Optional.of(new Answer("无法从当前资料中找到具有可靠页码的有效证据，暂时无法确认该问题。请调整问题或检查论文解析结果。",

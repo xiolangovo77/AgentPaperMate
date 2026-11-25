@@ -40,6 +40,8 @@ public class RagProperties {
     private int retrievalRrfK = 10;
     /** 按 RRF 融合排名送入精排模型的候选分块数上限。 */
     private int retrievalRerankInput = 20;
+    /** 论文库问答进入段落检索前的粗召上限，取值为 1 至 100 篇。 */
+    private int paperLibraryTopP = 10;
     /** 固定每路召回的深度，并要求精排返回完整排名。 */
     private boolean frozenRetrieval;
     /** 为空时沿用执行器的回答语言。 */
@@ -65,6 +67,7 @@ public class RagProperties {
                 || (retrievalNumCandidates != 0 && retrievalNumCandidates < retrievalTopK)
                 || retrievalRrfK < 1 || retrievalRrfK > 10000
                 || retrievalRerankInput < 1 || retrievalRerankInput > 200
+                || paperLibraryTopP < 1 || paperLibraryTopP > 100
                 || maxEvidence < 1 || maxEvidence > retrievalTopK || evidenceTokenBudget < 128
                 || evidenceTokenBudget > 32000 || maxPapers < 1 || maxPapers > 100
                 || maxOutputTokens < 1 || maxOutputTokens > 16000 || maxModelCalls < 1 || maxModelCalls > 100

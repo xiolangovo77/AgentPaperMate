@@ -1,0 +1,25 @@
+{
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "paperId": { "type": "keyword" },
+      "ownerId": { "type": "keyword" },
+      "indexVersion": { "type": "integer" },
+      "scopeKey": { "type": "keyword" },
+      "title": {
+        "type": "text",
+        "fields": {
+          "en": { "type": "text", "analyzer": "english" },
+          "cjk": { "type": "text", "analyzer": "cjk" }
+        }
+      },
+      "abstractText": {
+        "type": "text",
+        "fields": {
+          "en": { "type": "text", "analyzer": "english" },
+          "cjk": { "type": "text", "analyzer": "cjk" }
+        }
+      }
+    }
+  }
+}

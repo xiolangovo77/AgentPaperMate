@@ -13,6 +13,6 @@ public class RunCreateRequest {
     private String question;
     /** 主动重新执行时关联旧任务，新任务必须使用新幂等键。 */
     private Long retryOfRunId;
-    /** 执行策略：省略或 null 使用 rag；仅允许 rag、agent，不能指定任意执行器。 */
+    /** 问答执行策略，可选 rag、agent 或 paper_library，省略或传 null 时使用 rag。 */
     private String executorType;
 }

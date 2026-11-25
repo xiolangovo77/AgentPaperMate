@@ -226,7 +226,7 @@ public class RagRetriever {
         return ranked;
     }
 
-    private List<PaperScope> resolveScopes(RetrievalRequest request, RetrievalContext context) {
+    List<PaperScope> resolveScopes(RetrievalRequest request, RetrievalContext context) {
         List<PaperScope> allowed = context.allowedScopes();
         if (allowed.size() > properties.getMaxPapers()) throw new IllegalArgumentException("检索论文范围超过上限");
         if (request.requestedPaperIds() == null) return allowed;

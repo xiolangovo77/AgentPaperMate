@@ -24,4 +24,20 @@
         <result column="active_index_attempt" property="activeIndexAttempt" />
     </resultMap>
 
+    <select id="selectForLibraryIndex" resultMap="BaseResultMap" timeout="30">
+        SELECT p.id, p.user_id, p.title, p.abstract_text, p.active_index_version, p.active_index_attempt
+        FROM paper p
+        JOIN app_user u ON u.id = p.user_id
+        WHERE u.username = #{username}
+          AND u.is_delete = 0
+          AND p.is_delete = 0
+          AND p.is_recycled = 0
+          AND p.active_index_version IS NOT NULL
+          AND p.active_index_attempt &lt;&gt; ''
+          AND p.id IN
+          <foreach collection="paperIds" item="paperId" open="(" separator="," close=")">
+              #{paperId}
+          </foreach>
+    </select>
+
 </mapper>

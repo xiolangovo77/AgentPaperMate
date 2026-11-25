@@ -554,8 +554,8 @@ public class RunStore {
                 || !request.getRequestKey().matches("[A-Za-z0-9_-]{16,64}") || request.getQuestion() == null
                 || request.getQuestion().isBlank() || request.getQuestion().getBytes(StandardCharsets.UTF_8).length > 16000,
                 ErrorCode.PARAMS_ERROR, "请提供16至64位幂等键和不超过16000字节的非空问题");
-        ThrowUtils.throwIf(!Set.of("rag", "agent").contains(executorType(request)),
-                ErrorCode.PARAMS_ERROR, "executorType 仅允许 rag 或 agent");
+        ThrowUtils.throwIf(!Set.of("rag", "agent", PaperLibraryRagExecutor.TYPE).contains(executorType(request)),
+                ErrorCode.PARAMS_ERROR, "executorType 仅允许 rag、agent 或 paper_library");
     }
 
     /** 兼容旧请求；空字符串、大小写变体和未知类型均由服务端拒绝。 */
